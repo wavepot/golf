@@ -132,7 +132,7 @@ const updateRenderFunction = () => {
   })
 }
 
-document.body.onclick = () => {
+let toggle = () => {
   audio = new AudioContext({
     numberOfChannels,
     sampleRate,
@@ -165,20 +165,31 @@ document.body.onclick = () => {
 
   console.log('connected node')
 
-  const toggle = () => {
+  const start = () => {
     updateRenderFunction()
     node.start()
 
     document.body.onclick = () => {}
 
-    document.body.ondblclick = () => {
+    toggle = () => {
       node.stop(0)
-      document.body.onclick = toggle
+      toggle = start
     }
   }
 
-  toggle()
+  toggle = start
+
+  start()
 }
+
+document.body.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.stopPropagation()
+    e.preventDefault()
+    toggle()
+    return false
+  }
+}, { capture: true })
 
 const main = async () => {
   editor = new Editor({
