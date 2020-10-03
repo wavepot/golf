@@ -132,6 +132,7 @@ const Fluent = (api, method) => {
 
     c.i = c.$.i
     c.n = c.$.n
+    c.p = c.$.n
 
     c.s = c.$.s
     c.t = c.$.t // TODO: c.br = beatrate
@@ -177,7 +178,7 @@ const create = () => {
   }
   const noise = (c,x=123456) => {
     c._spare.push(c.x0)
-    x=Math.sin(x+c.n)*100000
+    x=Math.sin(x+c.p)*100000
     return (x-Math.floor(x))*2-1
   }
   const eq = (c,...f) => {
@@ -205,13 +206,14 @@ const create = () => {
   const tanh = (c,x) => Math.tanh(c.x0*x)
   const mod = (c,x) => {
     x = toFinite(x) || 1
-    x = Math.floor(x * 4 * c.$.br)
-    c.n = c.n % x
-    // c.s = c.s % x
+    x = x * 4
+    // c.n = c.n % x
+    c.s = c.s % x
+    c.t = c.t % x
     //      $.t = $.n/$.br // TODO: c.br = beatrate
-    c.s = c.n / c.$.sr
-    c.t = c.n / c.$.br //% x // TODO: beatrate
-    // c.p = c.n % (x*c.$.br) // TODO: beatrate
+    // c.s = c.n / c.$.sr
+    // c.t = c.n / c.$.br //% x // TODO: beatrate
+    c.p = c.n % (x*c.$.br) // TODO: beatrate
     c._mod = x
   }
   const repeat = mod
