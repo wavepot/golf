@@ -76,7 +76,7 @@ const proxify = (context,[begin,end],exit,parent) => {
   const handler = {
     get (obj, prop) {
       if (exit[prop]) {
-        end(run, context())
+        end(run, context)
         return parent[prop] ?? parent
       }
       acc.push([prop])
@@ -88,7 +88,7 @@ const proxify = (context,[begin,end],exit,parent) => {
 
   return (a0,a1,a2,a3,a4) => {
     acc.splice(0)
-    begin(context(),a0,a1,a2,a3,a4)
+    begin(context,a0,a1,a2,a3,a4)
     return proxy
   }
 }
@@ -102,10 +102,28 @@ let i_d = 0
 const delays = []
 
 const Fluent = (api, method) => {
-  let c
-
   const init = (a0,a1,a2,a3,a4) => {
-    c = contexts[i_c] = contexts[i_c] ?? Context()
+    let c = contexts[i_c]
+    if (!c) {
+      c = contexts[i_c] = Context()
+
+      c.o = {}
+
+      Object.assign(c.o, Object.fromEntries(
+        Object.entries(api).map(([k, v]) => [k,
+          Array.isArray(v)
+          ? proxify(c, v, exit, c.o)
+          : (a0,a1,a2,a3,a4) => {
+
+            c.x0 = toFinite(v(c,a0,a1,a2,a3,a4) ?? c.x0)
+            return c.o
+          }
+        ])))
+
+      c.o.valueOf =
+      c.o[Symbol.toPrimitive] = () => (c.o.join(), c.x0)
+    }
+
     i_c++
 
     c.x2 = c.x1
@@ -119,24 +137,8 @@ const Fluent = (api, method) => {
     c.s = c.$.s
     c.t = c.$.t // TODO: c.br = beatrate
 
-    return o[method](a0,a1,a2,a3,a4)
+    return c.o[method](a0,a1,a2,a3,a4)
   }
-
-  const o = {}
-
-  Object.assign(o, Object.fromEntries(
-    Object.entries(api).map(([k, v]) => [k,
-      Array.isArray(v)
-      ? proxify(() => c, v, exit, o)
-      : (a0,a1,a2,a3,a4) => {
-
-        c.x0 = toFinite(v(c,a0,a1,a2,a3,a4) ?? c.x0)
-        return o
-      }
-    ])))
-
-  o.valueOf =
-  o[Symbol.toPrimitive] = () => (o.join(), c.x0)
 
   return init
 }
