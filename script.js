@@ -1,218 +1,136 @@
+import Editor, { registerEvents } from './editor/editor.js'
+import LoopNode from './loop-node.js'
+import Shared32Array from './shared32array.js'
+
+const initial = `\
+sin(mod(1/4).hz(35.881).exp(.057))
+  .mod(1/4)
+  .exp(5.82)
+  .tanh(2.18).tanh(5.22)
+    .on(7,1/4,8).tanh(15).vol(.3)
+    .on(4,1/4).vol(0)
+  .out(.7)
+
+// sin(mod(1/8).hz(85.881).exp(.257)
+    // .on(3,1/2,4).mul(2))
+  // .mod(1/16)
+  // .exp(5.82)
+  // .tanh(10.18)
+    // .on(4,1/4).vol(0)
+  // .out(.12)
+
+// mod(1/4).noise(133377).exp(10)
+  // .delay(1/(800+sin(bt(1/2))*200),.7)
+  // .delay(1/8,.2)
+  // .delay(1/16,.8)
+  // .eq(bp(700,.2))
+  // .mod(1/2).exp(13)
+  // .on(1,1/4,2).vol(0)._
+  // .tanh(1.2)
+  // .out(1.5)
+
+mod(1/8).noise(133377).exp(19)
+  .on(1,1/8,2).vol(0)
+  .out(.3)
+
+mod(1/16).noise(1377).exp(40)
+  .out(.2)
+
+mod(1/4).noise(500).exp(110)
+  .offt(.986).noise(450).exp(110).vol(1.25)
+  .offt(.976).noise(500).exp(110).vol(.9)
+  .noise(8200).exp(8.5).vol(.1)
+  .join()
+  .eq(
+    bp(1300,1.2,.7),
+    bp(1100,1,.7),
+    bp(800,.3,.75),
+  )
+    .on(1,1/4,4).vol(0)
+    .on(3,1/4,4).vol(0)
+  .out(1.4)
+
+// offt(3/16).mod(1/8).sin(hz(570)+val(5).mod(1/8).exp(3)).exp(8).tanh(5)
+  // .noise(800).exp(8).vol(.015)
+  // .out(.20)
+
+offt(3/16).mod(1/8).sin(hz(val(200).on(2,1/4,2).val(370).on(3,1/4,4).val(500)._.mul(.5))+val(5).mod(1/8).exp(3)).exp(8).tanh(5)
+  .noise(800).exp(8).vol(.015)
+  .out(.16)
+`
+
 const numberOfChannels = 1
 const sampleRate = 44100
-const length = 4096
+const bpm = 120
+
+let audio, node, buffer, render = () => {}
 
 let once = true
-const proxify = (context,[begin,end],exit,parent) => {
-  const acc = []
 
-  const add = (a0,a1,a2,a3,a4) => {
-    acc[acc.length-1].push(a0,a1,a2,a3,a4)
-    return proxy
-  }
+let editor
 
-  const run = () => {
-    acc.splice(0).forEach(([method,a0,a1,a2,a3,a4]) =>
-      parent[method](a0,a1,a2,a3,a4))
-  }
+let currentWorker
+let nextWorker
 
-  const handler = {
-    get (obj, prop) {
-      if (exit[prop]) {
-        end(run, context())
-        return parent[prop] ?? parent
-      }
-      acc.push([prop])
-      return add
+let playing = false
+let updateInProgress = false
+let hasChanged = false
+
+let n = 0
+
+const methods = {
+  play (worker, data) {
+    n = data.n
+    if (!updateInProgress || worker === currentWorker) {
+      return // discard
     }
-  }
-
-  const proxy = new Proxy(parent, handler)
-
-  return (a0,a1,a2,a3,a4) => {
-    acc.splice(0)
-    begin(context(),a0,a1,a2,a3,a4)
-    return proxy
+    playing = true
+    updateInProgress = false
+    nextWorker = currentWorker
+    currentWorker = worker
   }
 }
 
-const exit = Object.fromEntries(['sin','on','out','repeat','_',Symbol.toPrimitive].map(key => [key, true]))
-
-let ic = 0
-const contexts = window.contexts = []
-
-const Fluent = (api, method) => {
-  let c
-
-  const init = (a0,a1,a2,a3,a4) => {
-    c = contexts[ic] = contexts[ic] ?? Context()
-    ic++
-
-    c.xm1 = c.x0
-    c.x0 = 0
-
-    c.i = c.$.i
-    c.n = c.$.n
-    c.p = c.$.n
-
-    c.s = c.$.s
-    c.t = c.$.t // TODO: c.br = beatrate
-
-    return o[method](a0,a1,a2,a3,a4)
+const workers = [1,2].map(() => {
+  const workerUrl = new URL('render-worker.js', import.meta.url)
+  const worker = new Worker(workerUrl, { type: 'module' })
+  worker.onmessage = ({ data }) => {
+    methods[data.call](worker, data)
   }
-
-  const o = {}
-
-  Object.assign(o, Object.fromEntries(
-    Object.entries(api).map(([k, v]) => [k,
-      Array.isArray(v)
-      ? proxify(() => c, v, exit, o)
-      : (a0,a1,a2,a3,a4) => {
-        c.x0 = v(c,a0,a1,a2,a3,a4) ?? c.x0
-        return o
-      }
-    ])))
-
-  o.valueOf =
-  o[Symbol.toPrimitive] = () => (o.join(), c.x0)
-
-  return init
-}
-
-const $ = {
-  _out: [new Float32Array]
-}
-
-const Context = () => ({
-  ...$,
-  $,
-  t: 0,
-  s: 0,
-  n: 1,
-  i: 0,
-  sr: sampleRate,
-  x0: 0,
-  xm1: 0,
-  _mod: Infinity,
-  _spare: [],
+  worker.onerror = error => {
+    updateInProgress = false
+    console.error(error)
+  }
+  worker.onmessageerror = error => {
+    updateInProgress = false
+    console.error(error)
+  }
+  return worker
 })
 
-Object.assign($, Context())
+currentWorker = workers[0]
+nextWorker = workers[1]
 
-const create = () => {
-  const context = Context()
-  const PI = Math.PI
-  const TAU = 2*PI
-  const join = (c) => c._spare.splice(0).reduce((p,n)=>p+n,c.x0)
-  const sin = (c,x) => {
-    c._spare.push(c.x0)
-    return Math.sin(x*TAU)
-  }
-  const noise = (c,x=123456) => {
-    c._spare.push(c.x0)
-    x=Math.sin(x+c.p)*100000
-    return (x-Math.floor(x))*2-1
-  }
-  const val = (c,x) => x
-  const hz = (c,x) => c.s*x
-  const bt = (c,x) => c.t*4*x
-  const exp = (c,x) => c.x0*Math.exp(-c.t*x)
-  const tanh = (c,x) => Math.tanh(c.x0*x)
-  const mod = (c,x) => {
-    x = x * 4
-    c.s = c.s % x
-    c.t = c.t % x // TODO: beatrate
-    c.p = c.n % (x*c.sr) // TODO: beatrate
-    c._mod = x
-  }
-  const repeat = mod
-  const offt = (c,x) => { c.t=(c.t+x)%c._mod }
-  const vol = (c,x) => c.x0*x
-  const mul = vol
-  const out = (c,x=1,send=0) => { c.x0=join(c); c.$._out[send][c.i]+=c.x0*x }
-  const on = [
-    (c,count,beat,mod) => { c._on = [count,beat,mod] },
-    (run, { $, _on: [count,beat,mod=count] }) => {
-      Math.floor($.t/(beat*4))%mod === count-1 && run()
-    }
-  ]
-  const api = {
-    join,
-    sin,
-    noise,
-    hz,
-    bt,
-    exp,
-    tanh,
-    mod,
-    offt,
-    repeat,
-    val,
-    vol,
-    mul,
-    out,
-    on,
-  }
-  return Object.fromEntries(
-    Object.entries(api).map(([k,v]) =>
-      [k,Fluent(api, k)]))
+const requestNextBuffer = () => {
+  currentWorker.postMessage({ call: 'play' })
 }
 
+const updateRenderFunction = () => {
+  if (updateInProgress) return
+  hasChanged = false
 
-const api = create()
-const { sin, offt, noise, val, mod, hz, repeat, exp, out } = api
-
-const play = e => {
-  $._out[0] = e.outputBuffer.getChannelData(0)
-
-  console.time('play')
-  for ($.i = 0; $.i < length; $.i++, $.n++) {
-    $._out[0][$.i] = ic = 0
-
-    $.s = $.n/$.sr
-    $.t = $.n/$.sr // TODO: c.br = beatrate
-
-    // sin(hz(300)).out()
-
-    sin(mod(1/4).hz(35.881).exp(.057))
-      .mod(1/4)
-      .exp(5.82)
-      .tanh(2.18).tanh(5.22)
-        .on(7,1/4,8).tanh(15).vol(.3)
-        .on(4,1/4).vol(0)
-      .out(.7)
-
-    sin(mod(1/8).hz(85.881).exp(.257)
-        .on(3,1/2,4).mul(2))
-      .mod(1/16)
-      .exp(5.82)
-      .tanh(10.18)
-        .on(4,1/4).vol(0)
-      .out(.12)
-
-    mod(1/8).noise(133377).exp(19)
-      .on(1,1/8,2).vol(0)
-      .out(.3)
-
-    mod(1/4).noise(500).exp(110)
-      .offt(.983).noise(450).exp(110).vol(1.25)
-      .offt(.969).noise(500).exp(110).vol(.9)
-      .noise(8200).exp(7).vol(.1)
-      .join()
-        .on(1,1/4,4).vol(0)
-        .on(3,1/4,4).vol(0)
-      .out()
-
-    mod(1/8).sin(hz(570)+val(5).mod(1/8).exp(20)).exp(5)
-      .mod(1/8).noise(800).exp(8).vol(.015)
-      .out(.2)
-
-    $.n++
+  if (!playing) {
+    nextWorker = workers[0]
+    currentWorker = workers[1]
   }
-  console.timeEnd('play')
-}
 
-let audio, script
+  updateInProgress = nextWorker
+  nextWorker.postMessage({
+    call: 'updateRenderFunction',
+    value: editor.value,
+    n: n //+node.bufferSize
+  })
+}
 
 document.body.onclick = () => {
   audio = new AudioContext({
@@ -221,22 +139,70 @@ document.body.onclick = () => {
     latencyHint: 'playback' // without this audio glitches
   })
 
-  script = audio.createScriptProcessor(
-    length,
-    numberOfChannels,
-    numberOfChannels
-  )
+  node = new LoopNode({ numberOfChannels, bpm })
 
-  script.onaudioprocess = play
+  node.connect(audio.destination)
+
+  workers.forEach(worker => {
+    worker.buffer = Array(numberOfChannels).fill(0).map(() =>
+      new Shared32Array(node.bufferSize))
+
+    worker.postMessage({
+      call: 'setup',
+      buffer: worker.buffer,
+      sampleRate,
+      beatRate: node.beatRate
+    })
+  })
+
+  node.onbar = () => {
+    node.playBuffer(currentWorker.buffer)
+    if (hasChanged) {
+      updateRenderFunction()
+    }
+    requestNextBuffer()
+  }
+
+  console.log('connected node')
 
   const toggle = () => {
-    script.connect(audio.destination)
-    console.log('connected script')
-    document.body.onclick = () => {
-      script.disconnect(audio.destination)
+    updateRenderFunction()
+    node.start()
+
+    document.body.onclick = () => {}
+
+    document.body.ondblclick = () => {
+      node.stop(0)
       document.body.onclick = toggle
     }
   }
 
   toggle()
 }
+
+const main = async () => {
+  editor = new Editor({
+    id: 'main',
+    title: 'new-project.js',
+    font: '/fonts/SpaceMono-Regular.woff2',
+    value: initial,
+    fontSize: '11.5pt',
+    // fontSize: '16.4pt',
+    padding: 10,
+    titlebarHeight: 42,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+
+  editor.onchange = () => {
+    hasChanged = true
+  }
+
+  container.appendChild(editor.canvas)
+  editor.parent = document.body
+  editor.rect = editor.canvas.getBoundingClientRect()
+
+  registerEvents(document.body)
+}
+
+main()
