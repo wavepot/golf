@@ -1,5 +1,7 @@
 import biquad from './biquad.js'
 import Delay from './delay.js'
+import Wavetable from './wavetable.js'
+import Osc from './osc.js'
 import {
   toFinite,
   clamp,
@@ -17,6 +19,13 @@ const delays = []
 const sends = {}
 
 const patterns = {}
+
+const wavetable_oscs = ['sin','saw','ramp','tri','sqr','noise']
+const wavetables_index = Object.fromEntries(
+  wavetable_oscs.map(key => [key, 0]))
+const wavetables = Object.fromEntries(
+  wavetable_oscs.map(key => [key, []]))
+let wavetable
 
 const Fluent = (api, method) => {
   const init = (a0,a1,a2,a3,a4) => {
@@ -38,7 +47,7 @@ const Fluent = (api, method) => {
         ])))
 
       c.o.valueOf =
-      c.o[Symbol.toPrimitive] = () => (c.o.join(), c.x0)
+      c.o[Symbol.toPrimitive] = () => c.x0
     }
 
     i_c++
@@ -103,17 +112,8 @@ const create = () => {
   const TAU = 2*PI
   const freqToFloat = (freq = 500) => toFinite(freq / ($.sr / 2))
   const join = (c) => c._spare.splice(0).reduce((p,n)=>p+n,c.x0)
-  const gen = fn => (c,x) => { c._spare.push(c.x0); return fn(c,x) }
-  const sin = gen((c,x) => Math.sin(c.s*x*TAU))
-  const saw = gen((c,x) => 1-2*(c.s%(1/x))*x)
-  const ramp = gen((c,x) => 2*(c.s%(1/x))*x-1)
-  const tri = gen((c,x) => Math.abs(1-(2*c.s*x)%2)*2-1)
-  const sqr = gen((c,x) => (c.s*x%1/x<1/x/2)*2-1)
-  const pulse = gen((c,x,w=.5) => (c.s*x%1/x<1/x/2*w)*2-1)
-  const noise = gen((c,x=123456) => {
-    x=Math.sin(x+c.p)*100000
-    return (x-Math.floor(x))*2-1
-  })
+  const push = (c) => { c._spare.push(c.x0) }
+
   const eq = (c,...f) => {
     f.filter(Boolean).map(([[b0,b1,b2,a1,a2],amt=1],i) => {
       i = c._i_e
@@ -141,7 +141,7 @@ const create = () => {
     i_d++
     return d.delay(Math.floor($.br*4*sig)).feedback(feedback).run(c.x0, amt)
   }
-  const val = (c,x) => x
+  const val = (c,x) => +x
   const hz = (c,x) => c.s*x
   const bt = (c,x) => c.t*(1/(x*16))
   const exp = (c,x=10) => c.x0*Math.exp(-c.t*x)
@@ -151,14 +151,15 @@ const create = () => {
     x = x * 4
     c.s = c.s % x
     c.t = c.t % x
-    c.p = c.n % (x*c.$.br) // TODO: beatrate
+    c.p = c.n % (x*c.$.br)
     c._mod = x
   }
   const repeat = mod
   const offt = (c,x) => { c.t=toFinite((c.t+x)%c._mod) }
   const vol = (c,x) => c.x0*x
   const mul = vol
-  const out = (c,x=1,send=0) => { c.$._out[send][c.i]+=c.o*x } // calls toPrimitive = join()
+  const add = (c,x) => { c.x0 += x }
+  const out = (c,x=1) => { o.send.out.add(c.x0*x) }
   const on = [
     (c,count,beat,mod) => { c._on = [count,beat,mod] },
     (run, { $, _on: [count,beat,mod=count] }) => {
@@ -167,9 +168,9 @@ const create = () => {
   ]
   const send = (c,key,amt=1) => {
     if (key in sends) {
-      o.send[key] += c.x0*amt
+      o.send[key].add(c.x0*amt)
     } else {
-      o.send[key] = sends[key] = c.x0*amt
+      o.send[key] = sends[key] = o.val(c.x0*amt)
     }
   }
   const pat = (c,x) => {
@@ -179,13 +180,7 @@ const create = () => {
   }
   const api = {
     join,
-    sin,
-    saw,
-    ramp,
-    tri,
-    sqr,
-    pulse,
-    noise,
+    push,
     delay,
     hz,
     bt,
@@ -200,12 +195,30 @@ const create = () => {
     val,
     vol,
     mul,
+    add,
     out,
     on,
   }
 
+  Object.assign(api, Osc('s'))
+  Object.assign(api, Object.fromEntries(
+    Object.entries(Osc('t')).map(([k, v]) => [k+'t', v])))
+
   Object.assign(api, Object.fromEntries(
     filterKeys.map(key => [key, (c,a0,a1,a2,a3,a4) => eq(c,o[key](a0,a1,a2,a3,a4))])))
+
+  Object.assign(api, Object.fromEntries(
+    wavetable_oscs.map(key => {
+      const genfn = (c,x) => {
+        let fn = wavetables[key][wavetables_index[key]]
+        if (!fn) {
+          fn = wavetables[key][wavetables_index[key]] = wavetable(key)
+        }
+        wavetables_index[key]++
+        return fn(c,x)
+      }
+      return [key+'w',genfn]
+    })))
 
   const o = Object.fromEntries(
     Object.entries(api).map(([k,v]) =>
@@ -223,11 +236,10 @@ let prev, render
 $.clear = i => {
   let key
 
-  $._out[0][i] =
-  i_c =
-  i_d = 0
+  i_c = i_d = 0
 
-  for (key in sends) api.send[key] = 0
+  for (key in sends) api.send[key] = api.val(0)
+  for (key in wavetables_index) wavetables_index[key] = 0
 
   $.s = $.n/$.sr
   $.t = $.n/$.br // TODO: c.br = beatrate
@@ -238,12 +250,15 @@ const methods = {
     buffer = data.buffer
     $.sr = data.sampleRate
     $.br = data.beatRate
+    wavetable = Wavetable($.sr)
     Object.assign(api, biquad($.sr))
   },
   updateRenderFunction ({ value, n }) {
+    api.$ = $
     api.sr = $.sr
     api.br = $.br
     prev = render
+    api.val(0).send('out')
     render = new Function(...Object.keys(api), value).bind(null, ...Object.values(api))
     if (!prev) prev = render
     $.n = n
@@ -270,6 +285,7 @@ const methods = {
     for ($.i = 1; $.i < buffer[0].length; $.i++, $.n++) {
       $.clear($.i)
       render()
+      $._out[0][$.i] = +api.send.out
     }
 
     console.timeEnd('play')

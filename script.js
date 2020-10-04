@@ -3,14 +3,17 @@ import LoopNode from './loop-node.js'
 import Shared32Array from './shared32array.js'
 
 const initial = `\
-// docs:
+// guide:
 //
 // ctrl+enter = play/pause
 //
 // mod(measure=1) = [beat time] modulo(%) [measure] (loop)
 // sin(hz) saw(hz) sqr(hz) tri(hz) pulse(hz,width) noise(seed)
+// gen+w = wavetable, i.e: sinw saww triw ...
+// gen+t = time synced, i.e: sint sawt, trit ...
 // val(x) = explicit value x
-// join() = joins/sums previous generators
+// push() = pushes value to spare to join later
+// join() = joins/sums previous spare values
 // exp(decay_speed=10) = reverse exponential curve (decay)
 // pat('.1 .2 .5 1') = volume pattern based on last mod
 // offt(time_offset) = shift time by time_offset (used with mod)
@@ -25,27 +28,34 @@ const initial = `\
 //                               the filters in parallel
 //                               whereas chaining is serial)
 // on(beat,measure,count=beat)...() = schedule all calls
-//                    between \`on\` and \`()\` to play on
+//                    between "on" and "()" to play on
 //                    target beat in measure, loops on count
 // delay(measure=1/16,feedback=.5,amt=.5)
 // tanh(x=1) = tanh value multiplied by x (s-curve distortion)
 // out(vol=1) = send value to speakers
-// send('send_name',amt=1) = sends to send channel \`send_name\`
-// val(send.send_name)...out() = process send \`send_name\`
+// send('send_name',amt=1) = sends to send channel "send_name"
+// val(send.send_name)...out() = process send "send_name"
+// send.out is the output and it's chainable like everything
 //
 // all changes are saved immediately and refresh
 // brings back the state as it was. to reset it
 // type in devtools console: delete localStorage.last
 
-var kick = mod(1/4).sin(60).exp(15).tanh(6)
+var kick = mod(1/4).sinw(60).exp(15).tanh(6)
   .on(8,1/2).vol(0)()
+  // .delay(1/8,.5)
+  // .send('fx')
+  .out(.7)
 
-var hihat = mod(1/16).noise(666).exp(30)
+var hihat = mod(1/16).noisew(1).exp(30)
   .pat('.1 .4 1 .4')
   .on(8,1/4).mod(1/32).vol(5).pat('.3 3')()
   .hs(16000)
-  .bpp(12000,1,.5)
+  // .bpp(2000,1,.5)
   .bpp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
+  .on(8,2).vol(0)()
+  .out(.23)
+  // .send('fx')
 
 var bass_melody = val(50)
   .on(8,1/8).val(70)()
@@ -55,27 +65,31 @@ var bass_melody = val(50)
 var bass = mod(1/16).pulse(bass_melody,.9).exp(10)
   .pat('.1 .1 .5 1')
   .lp(800,1.2)
+  .out(.7)
 
-var clap = mod(1/4).noise(500).exp(110)
-  .offt(.986).noise(450).exp(110).vol(1.25)
-  .offt(.976).noise(500).exp(110).vol(.9)
-  .noise(8200).exp(8.5).vol(.1)
+var clap = mod(1/4).noisew(8).exp(110)
+  .push().offt(.986).noisew(10).exp(110).vol(1.25)
+  .push().offt(.976).noisew(8).exp(110).vol(.9)
+  .push().noisew(8).exp(8.5).vol(.1)
   .join()
   .pat('- 1')
   .bpp(1300,1.1,.75)
-
-// mixer
-// kick.delay(1/8,.5)
-kick.out(.7)
-hihat.out(.23)//.send('fx')
-clap.out(.27).on(8,1/4).send('fx')()
-bass.out(.7)
+  .out(.27).on(8,1/4).send('fx')()
 
 var delay_w_fade_out = val(send.fx)
   .delay(1/6,.45,1)
   .bpp(18000-mod(1).val(10000).exp(1),1,1)
+  .out(1.8)
 
-delay_w_fade_out.out(.8)
+var crash = mod(16).noisew(1).exp(.2)
+  .bpp(6000)
+  .bpp(14000)
+  .out(.15)
+
+send.out
+  // .mod(1/16).pat('1 -')
+  .on(8,2)
+    .bpp(2000+sint(1/32)*1900)()
 `
 
 const numberOfChannels = 1
@@ -197,7 +211,7 @@ setTimeout(() => {
       // hasChanged = true
     }
   }, { capture: true })
-}, 100)
+}, 800)
 
 const main = async () => {
   editor = new Editor({
