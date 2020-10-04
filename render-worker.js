@@ -20,7 +20,7 @@ const sends = {}
 
 const patterns = {}
 
-const wavetable_oscs = ['sin','saw','ramp','tri','sqr','noise']
+const wavetable_oscs = ['sin','saw','ramp','tri','sqr','pulse','noise']
 const wavetables_index = Object.fromEntries(
   wavetable_oscs.map(key => [key, 0]))
 const wavetables = Object.fromEntries(
@@ -117,22 +117,25 @@ const create = () => {
   const eq = (c,...f) => {
     f.filter(Boolean).map(([[b0,b1,b2,a1,a2],amt=1],i) => {
       i = c._i_e
-      c._i_e += 3
+      c._i_e += 6
       c._curr_filter_n++
 
-      c.y[i] = clamp(-1,1,toFinite(
-        b0*c.x0
-      + b1*c.x1
-      + b2*c.x2
+      let y = toFinite(
+        b0*c.y[i+3]
+      + b1*c.y[i+4]
+      + b2*c.y[i+5]
       - a1*c.y[i+1]
       - a2*c.y[i+2]
-      ))
+      )
 
+      c.y[i+5] = c.y[i+4]
+      c.y[i+4] = c.y[i+3]
+      c.y[i+3] = c.x0
+
+      c.y[i] = y
       c.y[i+2] = c.y[i+1]
       c.y[i+1] = c.y[i]
 
-      return [c.y[i],amt]
-    }).forEach(([y,amt]) => {
       c.x0 = c.x0*(1-amt) + y*amt
     })
   }
@@ -173,11 +176,47 @@ const create = () => {
       o.send[key] = sends[key] = o.val(c.x0*amt)
     }
   }
-  const pat = (c,x) => {
-    const vols = patterns[x] = patterns[x] ?? x.replace(/ {1,}|\n/g, ' ').trim().split(' ')
-      .map(n => toFinite(parseFloat(n)))
-    return c.x0 * vols[Math.floor(($.t/c._mod)%vols.length)]
+  const notes = 'ccddeffggaab'
+  const stringToNote = s => {
+    s = s.split('')
+    let octave = parseInt(s[s.length - 1], 10)
+    if (isNaN(octave)) octave = 4
+    const note = s[0].toLowerCase()
+    const flat = s[1] === 'b'
+    const sharp = s[1] === '#'
+    return notes.indexOf(note) + (octave * 12) + sharp - flat
   }
+  const note = (c,n) => {
+    if ('string' === typeof n) n = stringToNote(n)
+    return Math.pow(2, (n - 57)/12) * 440 // equally tempered
+  }
+  const EXCESS_WHITESPACE = / {1,}|\n/g
+  const HAS_LETTER = /[a-zA-Z]/
+  const parsePattern = x => x
+    .replace(EXCESS_WHITESPACE, ' ') // remove excess whitespace
+    .trim() // and trim
+    .split(' ') // split to array of values
+    .map(n => toFinite(
+      HAS_LETTER.test(n)
+        ? stringToNote(n) // has a letter then it is a musical note
+        : parseFloat(n) // otherwise it's a scalar
+      ))
+  let _pat // TODO: memoize()
+  const pat = (c,x,_mod=c._mod/4) => {
+    _pat = patterns[x] = patterns[x] ?? parsePattern(x)
+    return _pat[Math.floor(($.t/(_mod*4))%_pat.length)]
+  }
+  const patv = (c,x,_mod) => c.x0 * pat(c,x,_mod)
+  let _pos, _now, _next, _alpha
+  const slide = (c,x,_mod,speed=1) => {
+    _pat = patterns[x] = patterns[x] ?? parsePattern(x)
+    _pos = $.t/(_mod*4)%_pat.length
+    _now = Math.floor(_pos)
+    _next = (_now + 1)%_pat.length
+    _alpha = _pos - _now
+    return _pat[_now]+((_pat[_next]-_pat[_now])*Math.pow(_alpha, speed))
+  }
+  const slidev = (c,x,_mod,speed) => c.x0 * slide(c,x,_mod,speed)
   const api = {
     join,
     push,
@@ -188,7 +227,11 @@ const create = () => {
     tanh,
     mod,
     offt,
+    note,
     pat,
+    patv,
+    slide,
+    slidev,
     eq,
     send,
     repeat,

@@ -699,7 +699,7 @@ class LoopNode {
   }
 
   get bufferSize () {
-    return this.beatRate /// 5 | 0
+    return this.beatRate*4 /// 5 | 0
   }
 
   resetTime (offset = 0) {
@@ -814,14 +814,20 @@ const initial = `\
 // ctrl+enter = play/pause
 //
 // mod(measure=1) = [beat time] modulo(%) [measure] (loop)
-// sin(hz) saw(hz) sqr(hz) tri(hz) pulse(hz,width) noise(seed)
+// sin(hz) saw(hz) ramp(hz) sqr(hz) tri(hz) pulse(hz,width) noise(seed)
 // gen+w = wavetable, i.e: sinw saww triw ...
 // gen+t = time synced, i.e: sint sawt, trit ...
 // val(x) = explicit value x
 // push() = pushes value to spare to join later
 // join() = joins/sums previous spare values
 // exp(decay_speed=10) = reverse exponential curve (decay)
-// pat('.1 .2 .5 1') = volume pattern based on last mod
+// pat('.1 .2 .5 1',measure=last_mod) = pattern of scalars
+// pat('a4 f#5 c3 d3',measure=last_mod) = pattern of notes
+// patv(...) = shortcut to pattern volumes
+// slide('.1 .2 .5 1',measure=last_mod,speed=1) = slide pattern
+//   note: for sliding hz use wavetable oscillators
+// slidev(...) = shortcut to slide volumes
+// note('b#4') = note musical value in hz
 // offt(time_offset) = shift time by time_offset (used with mod)
 // vol(x)|mul(x) = multiply current value by x
 // lp1(cut,amt=1) hp1(cut,amt=1)
@@ -830,9 +836,7 @@ const initial = `\
 // not(cut,res=1,amt=1) ap(cut,res=1,amt=1)
 // pk(cut,res=1,gain=1,amt=1)
 // ls(cut,res=1,gain=1,amt=1) hs(cut,res=1,gain=1,amt=1)
-// eq(bp(...),ls(...),...) = equalizer (note: this executes
-//                               the filters in parallel
-//                               whereas chaining is serial)
+// eq(bp(...),ls(...),...) = equalizer
 // on(beat,measure,count=beat)...() = schedule all calls
 //                    between "on" and "()" to play on
 //                    target beat in measure, loops on count
@@ -854,11 +858,11 @@ var kick = mod(1/4).sinw(60).exp(15).tanh(6)
   .out(.7)
 
 var hihat = mod(1/16).noisew(1).exp(30)
-  .pat('.1 .4 1 .4')
-  .on(8,1/4).mod(1/32).vol(5).pat('.3 3')()
+  .patv('.1 .4 1 .4')
+  .on(8,1/4).patv('1.5 15',1/32)()
   .hs(16000)
-  // .bpp(2000,1,.5)
-  .bpp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
+  // .bp(2000,3,1)
+  .bp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
   .on(8,2).vol(0)()
   .out(.23)
   // .send('fx')
@@ -868,9 +872,14 @@ var bass_melody = val(50)
   .on(8,1/2,16).mul(1.5)()
   .on(16,1/2).mul(2)()
 
-var bass = mod(1/16).pulse(bass_melody,.9).exp(10)
-  .pat('.1 .1 .5 1')
-  .lp(800,1.2)
+// var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
+  // .on(8,1/8).val(70)()
+  // .on(8,1/2,16).mul(1.5)()
+  // .on(16,1/2).mul(2)()
+
+var bass = mod(1/16).pulsew(bass_melody).exp(10)
+  .patv('.1 .1 .5 1')
+  .lp(600,1.2)
   .out(.7)
 
 var clap = mod(1/4).noisew(8).exp(110)
@@ -878,24 +887,28 @@ var clap = mod(1/4).noisew(8).exp(110)
   .push().offt(.976).noisew(8).exp(110).vol(.9)
   .push().noisew(8).exp(8.5).vol(.1)
   .join()
-  .pat('- 1')
-  .bpp(1300,1.1,.75)
-  .out(.27).on(8,1/4).send('fx')()
+  .patv('- 1')
+  .bp(1200,1.7,1)
+  .out(.45).on(8,1/4).send('fx')()
+
+var crash = on(1,1,16).mod(16).noisew(1).exp(.2)
+  .bp(6000)
+  .bp(14000)
+  .out(.15)()
 
 var delay_w_fade_out = val(send.fx)
   .delay(1/6,.45,1)
-  .bpp(18000-mod(1).val(10000).exp(1),1,1)
+  .bp(18000-mod(1).val(10000).exp(1),1,1)
   .out(1.8)
 
-var crash = mod(16).noisew(1).exp(.2)
-  .bpp(6000)
-  .bpp(14000)
-  .out(.15)
-
 send.out
-  // .mod(1/16).pat('1 -')
+  .on(2,1,32)
+  .slidev('1.1 - - - 1.1 - - - 1.1 - 1.2 - 1 - 1 -', 1/16, 5)
+  ()
   .on(8,2)
-    .bpp(2000+sint(1/32)*1900)()
+  .vol(.65)
+  .bp(2000+sint(1/32)*1800,5)
+  ()
 `;
 
 const numberOfChannels = 1;
@@ -914,6 +927,7 @@ const methods$1 = {
   play (worker, data) {
     n = data.n;
     updateInProgress = false;
+    node.playBuffer(worker.buffer);
   }
 };
 
@@ -932,6 +946,8 @@ worker.onmessageerror = error => {
 };
 
 const requestNextBuffer = () => {
+  if (updateInProgress) return
+  updateInProgress = true;
   worker.postMessage({ call: 'play' });
 };
 
@@ -970,7 +986,6 @@ let toggle = () => {
   });
 
   node.onbar = () => {
-    node.playBuffer(worker.buffer);
     if (hasChanged) {
       updateRenderFunction();
     } else {
