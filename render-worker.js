@@ -220,7 +220,20 @@ const create = () => {
 const api = create()
 
 let buffer
-let render
+let prev, render
+
+$.clear = i => {
+  let key
+
+  $._out[0][i] =
+  i_c =
+  i_d = 0
+
+  for (key in sends) api.send[key] = 0
+
+  $.s = $.n/$.sr
+  $.t = $.n/$.br // TODO: c.br = beatrate
+}
 
 const methods = {
   setup (data) {
@@ -232,32 +245,34 @@ const methods = {
   updateRenderFunction ({ value, n }) {
     api.sr = $.sr
     api.br = $.br
+    prev = render
     render = new Function(...Object.keys(api), value).bind(null, ...Object.values(api))
+    if (!prev) prev = render
     $.n = n
     methods.play()
   },
   play () {
     if (!render) return
 
+    console.time('play')
+
     $._out[0] = buffer[0]
 
-    let key
-    console.time('play')
-    for ($.i = 0; $.i < buffer[0].length; $.i++, $.n++) {
-      $._out[0][$.i] =
-      i_c =
-      i_d = 0
-
-      for (key in sends) api.send[key] = 0
-
-      $.s = $.n/$.sr
-      $.t = $.n/$.br // TODO: c.br = beatrate
-
+    $.clear(0)
+    try {
       render()
-      // sin(hz(300)).out()
-      // $.n++
+    } catch (err) {
+      console.error(err)
+      render = prev
+      render()
     }
-    // node.playBuffer(buffer)
+
+    $.n++
+
+    for ($.i = 1; $.i < buffer[0].length; $.i++, $.n++) {
+      $.clear($.i)
+      render()
+    }
 
     console.timeEnd('play')
 

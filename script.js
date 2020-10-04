@@ -33,9 +33,9 @@ var clap = mod(1/4).noise(500).exp(110)
 // mixer
 // kick.delay(1/8,.5)
 kick.out(.7)
-hihat.out(.23)
-bass.out(.7)
+hihat.out(.23)//.send('fx')
 clap.out(.27).on(8,1/4).send('fx')()
+bass.out(.7)
 
 var delay_w_fade_out = val(send.fx)
   .delay(1/6,.45,1)
@@ -66,51 +66,36 @@ let n = 0
 const methods = {
   play (worker, data) {
     n = data.n
-    if (!updateInProgress || worker === currentWorker) {
-      return // discard
-    }
     playing = true
     updateInProgress = false
-    nextWorker = currentWorker
-    currentWorker = worker
   }
 }
 
-const workers = [1,2].map(() => {
-  const workerUrl = new URL('render-worker.js', import.meta.url)
-  const worker = new Worker(workerUrl, { type: 'module' })
-  worker.onmessage = ({ data }) => {
-    methods[data.call](worker, data)
-  }
-  worker.onerror = error => {
-    updateInProgress = false
-    console.error(error)
-  }
-  worker.onmessageerror = error => {
-    updateInProgress = false
-    console.error(error)
-  }
-  return worker
-})
-
-currentWorker = workers[0]
-nextWorker = workers[1]
+const workerUrl = new URL('render-worker.js', import.meta.url)
+const worker = new Worker(workerUrl, { type: 'module' })
+worker.onmessage = ({ data }) => {
+  methods[data.call](worker, data)
+}
+worker.onerror = error => {
+  updateInProgress = false
+  console.error(error)
+}
+worker.onmessageerror = error => {
+  updateInProgress = false
+  console.error(error)
+}
 
 const requestNextBuffer = () => {
-  currentWorker.postMessage({ call: 'play' })
+  worker.postMessage({ call: 'play' })
 }
 
 const updateRenderFunction = () => {
   if (updateInProgress) return
+
   hasChanged = false
+  updateInProgress = true
 
-  if (!playing) {
-    nextWorker = workers[0]
-    currentWorker = workers[1]
-  }
-
-  updateInProgress = nextWorker
-  nextWorker.postMessage({
+  worker.postMessage({
     call: 'updateRenderFunction',
     value: editor.value,
     n: n //+node.bufferSize
@@ -128,24 +113,23 @@ let toggle = () => {
 
   node.connect(audio.destination)
 
-  workers.forEach(worker => {
-    worker.buffer = Array(numberOfChannels).fill(0).map(() =>
-      new Shared32Array(node.bufferSize))
+  worker.buffer = Array(numberOfChannels).fill(0).map(() =>
+    new Shared32Array(node.bufferSize))
 
-    worker.postMessage({
-      call: 'setup',
-      buffer: worker.buffer,
-      sampleRate,
-      beatRate: node.beatRate
-    })
+  worker.postMessage({
+    call: 'setup',
+    buffer: worker.buffer,
+    sampleRate,
+    beatRate: node.beatRate
   })
 
   node.onbar = () => {
-    node.playBuffer(currentWorker.buffer)
+    node.playBuffer(worker.buffer)
     if (hasChanged) {
       updateRenderFunction()
+    } else {
+      requestNextBuffer()
     }
-    requestNextBuffer()
   }
 
   console.log('connected node')
@@ -167,14 +151,19 @@ let toggle = () => {
   start()
 }
 
-document.body.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.ctrlKey) {
-    e.stopPropagation()
-    e.preventDefault()
-    toggle()
-    return false
-  }
-}, { capture: true })
+setTimeout(() => {
+  document.body.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.stopPropagation()
+      e.preventDefault()
+      toggle()
+      return false
+    }
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      // hasChanged = true
+    }
+  }, { capture: true })
+}, 100)
 
 const main = async () => {
   editor = new Editor({

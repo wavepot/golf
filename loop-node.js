@@ -46,7 +46,7 @@ export default class LoopNode {
   }
 
   get bufferSize () {
-    return this.beatRate * 4 /// 5 | 0
+    return this.beatRate /// 5 | 0
   }
 
   resetTime (offset = 0) {
