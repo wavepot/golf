@@ -3,60 +3,45 @@ import LoopNode from './loop-node.js'
 import Shared32Array from './shared32array.js'
 
 const initial = `\
-sin(mod(1/4).hz(35.881).exp(.057))
-  .mod(1/4)
-  .exp(5.82)
-  .tanh(2.18).tanh(5.22)
-    .on(7,1/4,8).tanh(15).vol(.3)
-    .on(4,1/4).vol(0)
-  .out(.7)
+var kick = mod(1/4).sin(60).exp(15).tanh(6)
+  .on(8,1/2).vol(0)()
 
-// sin(mod(1/8).hz(85.881).exp(.257)
-    // .on(3,1/2,4).mul(2))
-  // .mod(1/16)
-  // .exp(5.82)
-  // .tanh(10.18)
-    // .on(4,1/4).vol(0)
-  // .out(.12)
+var hihat = mod(1/16).noise(666).exp(30)
+  .pat('.1 .4 1 .4')
+  .on(8,1/4).mod(1/32).vol(5).pat('.3 3')()
+  .hs(16000)
+  .bpp(12000,1,.5)
+  .bpp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
 
-// mod(1/4).noise(133377).exp(10)
-  // .delay(1/(800+sin(bt(1/2))*200),.7)
-  // .delay(1/8,.2)
-  // .delay(1/16,.8)
-  // .eq(bp(700,.2))
-  // .mod(1/2).exp(13)
-  // .on(1,1/4,2).vol(0)._
-  // .tanh(1.2)
-  // .out(1.5)
+var bass_melody = val(50)
+  .on(8,1/8).val(70)()
+  .on(8,1/2,16).mul(1.5)()
+  .on(16,1/2).mul(2)()
 
-mod(1/8).noise(133377).exp(19)
-  .on(1,1/8,2).vol(0)
-  .out(.3)
+var bass = mod(1/16).pulse(bass_melody,.9).exp(10)
+  .pat('.1 .1 .5 1')
+  .lp(800,1.2)
 
-mod(1/16).noise(1377).exp(40)
-  .out(.2)
-
-mod(1/4).noise(500).exp(110)
+var clap = mod(1/4).noise(500).exp(110)
   .offt(.986).noise(450).exp(110).vol(1.25)
   .offt(.976).noise(500).exp(110).vol(.9)
   .noise(8200).exp(8.5).vol(.1)
   .join()
-  .eq(
-    bp(1300,1.2,.7),
-    bp(1100,1,.7),
-    bp(800,.3,.75),
-  )
-    .on(1,1/4,4).vol(0)
-    .on(3,1/4,4).vol(0)
-  .out(1.4)
+  .pat('- 1')
+  .bpp(1300,1.1,.75)
 
-// offt(3/16).mod(1/8).sin(hz(570)+val(5).mod(1/8).exp(3)).exp(8).tanh(5)
-  // .noise(800).exp(8).vol(.015)
-  // .out(.20)
+// mixer
+// kick.delay(1/8,.5)
+kick.out(.7)
+hihat.out(.23)
+bass.out(.7)
+clap.out(.27).on(8,1/4).send('fx')()
 
-offt(3/16).mod(1/8).sin(hz(val(200).on(2,1/4,2).val(370).on(3,1/4,4).val(500)._.mul(.5))+val(5).mod(1/8).exp(3)).exp(8).tanh(5)
-  .noise(800).exp(8).vol(.015)
-  .out(.16)
+var delay_w_fade_out = val(send.fx)
+  .delay(1/6,.45,1)
+  .bpp(18000-mod(1).val(10000).exp(1),1,1)
+
+delay_w_fade_out.out(.8)
 `
 
 const numberOfChannels = 1
@@ -196,7 +181,7 @@ const main = async () => {
     id: 'main',
     title: 'new-project.js',
     font: '/fonts/SpaceMono-Regular.woff2',
-    value: initial,
+    value: localStorage.last ?? initial,
     fontSize: '11.5pt',
     // fontSize: '16.4pt',
     padding: 10,
@@ -206,6 +191,7 @@ const main = async () => {
   })
 
   editor.onchange = () => {
+    localStorage.last = editor.value
     hasChanged = true
   }
 
