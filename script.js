@@ -3,6 +3,40 @@ import LoopNode from './loop-node.js'
 import Shared32Array from './shared32array.js'
 
 const initial = `\
+// docs:
+//
+// ctrl+enter = play/pause
+//
+// mod(measure=1) = [beat time] modulo(%) [measure] (loop)
+// sin(hz) saw(hz) sqr(hz) tri(hz) pulse(hz,width) noise(seed)
+// val(x) = explicit value x
+// join() = joins/sums previous generators
+// exp(decay_speed=10) = reverse exponential curve (decay)
+// pat('.1 .2 .5 1') = volume pattern based on last mod
+// offt(time_offset) = shift time by time_offset (used with mod)
+// vol(x)|mul(x) = multiply current value by x
+// lp1(cut,amt=1) hp1(cut,amt=1)
+// lp(cut,res=1,amt=1) hp(cut,res=1,amt=1)
+// bp(cut,res=1,amt=1) bpp(cut,res=1,amt=1)
+// not(cut,res=1,amt=1) ap(cut,res=1,amt=1)
+// pk(cut,res=1,gain=1,amt=1)
+// ls(cut,res=1,gain=1,amt=1) hs(cut,res=1,gain=1,amt=1)
+// eq(bp(...),ls(...),...) = equalizer (note: this executes
+//                               the filters in parallel
+//                               whereas chaining is serial)
+// on(beat,measure,count=beat)...() = schedule all calls
+//                    between \`on\` and \`()\` to play on
+//                    target beat in measure, loops on count
+// delay(measure=1/16,feedback=.5,amt=.5)
+// tanh(x=1) = tanh value multiplied by x (s-curve distortion)
+// out(vol=1) = send value to speakers
+// send('send_name',amt=1) = sends to send channel \`send_name\`
+// val(send.send_name)...out() = process send \`send_name\`
+//
+// all changes are saved immediately and refresh
+// brings back the state as it was. to reset it
+// type in devtools console: delete localStorage.last
+
 var kick = mod(1/4).sin(60).exp(15).tanh(6)
   .on(8,1/2).vol(0)()
 

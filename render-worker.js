@@ -58,7 +58,6 @@ const Fluent = (api, method) => {
     // otherwise math blows up
     if (c._prev_filter_n !== c._curr_filter_n) {
       c.y.fill(0)
-      console.log('blow up?')
     }
     c._prev_filter_n = c._curr_filter_n
     c._curr_filter_n = 0
@@ -136,7 +135,6 @@ const create = () => {
     }).forEach(([y,amt]) => {
       c.x0 = c.x0*(1-amt) + y*amt
     })
-    debugger
   }
   const delay = (c,sig=1/16,feedback=.5,amt=.5) => {
     let d = delays[i_d] = delays[i_d] ?? new Delay($.br*8)
@@ -146,9 +144,9 @@ const create = () => {
   const val = (c,x) => x
   const hz = (c,x) => c.s*x
   const bt = (c,x) => c.t*(1/(x*16))
-  const exp = (c,x) => c.x0*Math.exp(-c.t*x)
-  const tanh = (c,x) => Math.tanh(c.x0*x)
-  const mod = (c,x) => {
+  const exp = (c,x=10) => c.x0*Math.exp(-c.t*x)
+  const tanh = (c,x=1) => Math.tanh(c.x0*x)
+  const mod = (c,x=1) => {
     x = toFinite(x) || 1
     x = x * 4
     c.s = c.s % x

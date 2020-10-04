@@ -699,7 +699,7 @@ class LoopNode {
   }
 
   get bufferSize () {
-    return this.beatRate * 4 /// 5 | 0
+    return this.beatRate /// 5 | 0
   }
 
   resetTime (offset = 0) {
@@ -809,6 +809,40 @@ class Shared32Array {
 }
 
 const initial = `\
+// docs:
+//
+// ctrl+enter = play/pause
+//
+// mod(measure=1) = [beat time] modulo(%) [measure] (loop)
+// sin(hz) saw(hz) sqr(hz) tri(hz) pulse(hz,width) noise(seed)
+// val(x) = explicit value x
+// join() = joins/sums previous generators
+// exp(decay_speed=10) = reverse exponential curve (decay)
+// pat('.1 .2 .5 1') = volume pattern based on last mod
+// offt(time_offset) = shift time by time_offset (used with mod)
+// vol(x)|mul(x) = multiply current value by x
+// lp1(cut,amt=1) hp1(cut,amt=1)
+// lp(cut,res=1,amt=1) hp(cut,res=1,amt=1)
+// bp(cut,res=1,amt=1) bpp(cut,res=1,amt=1)
+// not(cut,res=1,amt=1) ap(cut,res=1,amt=1)
+// pk(cut,res=1,gain=1,amt=1)
+// ls(cut,res=1,gain=1,amt=1) hs(cut,res=1,gain=1,amt=1)
+// eq(bp(...),ls(...),...) = equalizer (note: this executes
+//                               the filters in parallel
+//                               whereas chaining is serial)
+// on(beat,measure,count=beat)...() = schedule all calls
+//                    between \`on\` and \`()\` to play on
+//                    target beat in measure, loops on count
+// delay(measure=1/16,feedback=.5,amt=.5)
+// tanh(x=1) = tanh value multiplied by x (s-curve distortion)
+// out(vol=1) = send value to speakers
+// send('send_name',amt=1) = sends to send channel \`send_name\`
+// val(send.send_name)...out() = process send \`send_name\`
+//
+// all changes are saved immediately and refresh
+// brings back the state as it was. to reset it
+// type in devtools console: delete localStorage.last
+
 var kick = mod(1/4).sin(60).exp(15).tanh(6)
   .on(8,1/2).vol(0)()
 
@@ -839,9 +873,9 @@ var clap = mod(1/4).noise(500).exp(110)
 // mixer
 // kick.delay(1/8,.5)
 kick.out(.7)
-hihat.out(.23)
-bass.out(.7)
+hihat.out(.23)//.send('fx')
 clap.out(.27).on(8,1/4).send('fx')()
+bass.out(.7)
 
 var delay_w_fade_out = val(send.fx)
   .delay(1/6,.45,1)
@@ -857,11 +891,6 @@ const bpm = 120;
 let audio, node;
 
 let editor;
-
-let currentWorker;
-let nextWorker;
-
-let playing = false;
 let updateInProgress = false;
 let hasChanged = false;
 
@@ -870,51 +899,35 @@ let n = 0;
 const methods$1 = {
   play (worker, data) {
     n = data.n;
-    if (!updateInProgress || worker === currentWorker) {
-      return // discard
-    }
-    playing = true;
     updateInProgress = false;
-    nextWorker = currentWorker;
-    currentWorker = worker;
   }
 };
 
-const workers = [1,2].map(() => {
-  const workerUrl = new URL('render-worker.js', import.meta.url);
-  const worker = new Worker(workerUrl, { type: 'module' });
-  worker.onmessage = ({ data }) => {
-    methods$1[data.call](worker, data);
-  };
-  worker.onerror = error => {
-    updateInProgress = false;
-    console.error(error);
-  };
-  worker.onmessageerror = error => {
-    updateInProgress = false;
-    console.error(error);
-  };
-  return worker
-});
-
-currentWorker = workers[0];
-nextWorker = workers[1];
+const workerUrl = new URL('render-worker.js', import.meta.url);
+const worker = new Worker(workerUrl, { type: 'module' });
+worker.onmessage = ({ data }) => {
+  methods$1[data.call](worker, data);
+};
+worker.onerror = error => {
+  updateInProgress = false;
+  console.error(error);
+};
+worker.onmessageerror = error => {
+  updateInProgress = false;
+  console.error(error);
+};
 
 const requestNextBuffer = () => {
-  currentWorker.postMessage({ call: 'play' });
+  worker.postMessage({ call: 'play' });
 };
 
 const updateRenderFunction = () => {
   if (updateInProgress) return
+
   hasChanged = false;
+  updateInProgress = true;
 
-  if (!playing) {
-    nextWorker = workers[0];
-    currentWorker = workers[1];
-  }
-
-  updateInProgress = nextWorker;
-  nextWorker.postMessage({
+  worker.postMessage({
     call: 'updateRenderFunction',
     value: editor.value,
     n: n //+node.bufferSize
@@ -932,24 +945,23 @@ let toggle = () => {
 
   node.connect(audio.destination);
 
-  workers.forEach(worker => {
-    worker.buffer = Array(numberOfChannels).fill(0).map(() =>
-      new Shared32Array(node.bufferSize));
+  worker.buffer = Array(numberOfChannels).fill(0).map(() =>
+    new Shared32Array(node.bufferSize));
 
-    worker.postMessage({
-      call: 'setup',
-      buffer: worker.buffer,
-      sampleRate,
-      beatRate: node.beatRate
-    });
+  worker.postMessage({
+    call: 'setup',
+    buffer: worker.buffer,
+    sampleRate,
+    beatRate: node.beatRate
   });
 
   node.onbar = () => {
-    node.playBuffer(currentWorker.buffer);
+    node.playBuffer(worker.buffer);
     if (hasChanged) {
       updateRenderFunction();
+    } else {
+      requestNextBuffer();
     }
-    requestNextBuffer();
   };
 
   console.log('connected node');
@@ -971,14 +983,17 @@ let toggle = () => {
   start();
 };
 
-document.body.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.ctrlKey) {
-    e.stopPropagation();
-    e.preventDefault();
-    toggle();
-    return false
-  }
-}, { capture: true });
+setTimeout(() => {
+  document.body.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.stopPropagation();
+      e.preventDefault();
+      toggle();
+      return false
+    }
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) ;
+  }, { capture: true });
+}, 100);
 
 const main = async () => {
   editor = new Editor({
