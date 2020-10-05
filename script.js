@@ -50,7 +50,7 @@ const initial = `\
 // enjoy :)
 
 var kick =
-  mod(1/4).sinw(60).offt(-.04).exp(20).tanh(6)
+  mod(1/4).sinw(60).exp(20).tanh(6)
   .on(8,1/2).vol(0)
   // .delay(1/8,.5)
   // .send('fx')
