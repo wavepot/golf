@@ -1,5 +1,6 @@
 import biquad from './biquad.js'
 import Delay from './delay.js'
+import Daverb from './daverb.js'
 import Wavetable from './wavetable.js'
 import Osc from './osc.js'
 import {
@@ -24,6 +25,9 @@ const contexts = []
 
 let i_d = 0
 const delays = []
+
+let i_dv = 0
+const daverbs = []
 
 const sends = {}
 
@@ -171,6 +175,11 @@ const create = () => {
     i_d++
     return d.delay(Math.floor($.br*4*sig)).feedback(feedback).run(c.x0, amt)
   }
+  const daverb = (c,x={}) => {
+    let dv = daverbs[i_dv] = daverbs[i_dv] ?? new Daverb($.sr)
+    i_dv++
+    return c.x0 * (x.dry??0.6) + dv.process(c.x0,x)
+  }
   const val = (c,x) => +x
   const hz = (c,x) => c.s*x
   const bt = (c,x) => c.t*(1/(x*16))
@@ -243,6 +252,7 @@ const create = () => {
     join,
     push,
     delay,
+    daverb,
     hz,
     bt,
     exp,
@@ -303,7 +313,8 @@ let prev, render
 $.clear = i => {
   let key
 
-  i_c = i_d = 0
+  // reset pools
+  i_c = i_d = i_dv = 0
 
   for (key in sends) api.send[key] = api.val(0)
   for (key in wavetables_index) wavetables_index[key] = 0

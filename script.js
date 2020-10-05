@@ -55,6 +55,7 @@ var kick =
   // .delay(1/8,.5)
   // .send('fx')
   .out(.5)
+  .send('reverb',.12)
 
 var hihat =
   mod(1/16).noisew(1).exp(30)
@@ -73,16 +74,17 @@ var bass_melody =
   .on(8,1/2,16).mul(1.5)
   .on(16,1/2).mul(2)
 
-// // var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
-  // // .on(8,1/8).val(70)()
-  // // .on(8,1/2,16).mul(1.5)()
-  // // .on(16,1/2).mul(2)()
+// // // var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
+  // // // .on(8,1/8).val(70)()
+  // // // .on(8,1/2,16).mul(1.5)()
+  // // // .on(16,1/2).mul(2)()
 
 var bass =
   mod(1/16).pulsew(bass_melody).exp(10)
   .patv('.1 .1 .5 1')
   .lp(700,1.2)
-  .out(.45)
+  .out(.35)
+  .send('reverb',.05)
 
 var clap =
   mod(1/4).noisew(8).exp(110)
@@ -93,6 +95,7 @@ var clap =
   .patv('- 1')
   .bp(1200,1.7,1)
   .on(8,1/4).send('fx')
+  .send('reverb',.5)
   .out(.45)
 
 var crash =
@@ -100,13 +103,18 @@ var crash =
   .noisew(1)
   .bp(6000)
   .bp(14000)
-  .out(.15)
+  .out(.07)
 
-// var delay_w_fade_out =
-  // val(send.fx)
-  // .delay(1/6,.45,1)
-  // .bp(18000,3,1-mod(1).val(.5).exp(1))
-  // .out(1)
+var delay_w_fade_out =
+  val(send.fx)
+  .delay(1/6,.45,1)
+  .bp(18000,3,1-mod(1).val(.5).exp(1))
+  .out(1)
+
+var reverb_out =
+  val(send.reverb)
+  .daverb({ wet: 1 })
+  .out(.6)
 
 send.out
   .on(2,1,32)

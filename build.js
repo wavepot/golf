@@ -699,7 +699,7 @@ class LoopNode {
   }
 
   get bufferSize () {
-    return this.beatRate*4 /// 5 | 0
+    return this.beatRate * 4
   }
 
   resetTime (offset = 0) {
@@ -837,9 +837,10 @@ const initial = `\
 // pk(cut,res=1,gain=1,amt=1)
 // ls(cut,res=1,gain=1,amt=1) hs(cut,res=1,gain=1,amt=1)
 // eq(bp(...),ls(...),...) = equalizer
-// on(beat,measure,count=beat)...() = schedule all calls
-//                    between "on" and "()" to play on
-//                    target beat in measure, loops on count
+// on(beat,measure,count=beat).[call]() = schedule next call
+// use a second parenthesis group schedule many calls:
+//   i.e on(...).many().calls.grouped()()
+//   to bypass use an 'x' before, so xon() will passthrough
 // delay(measure=1/16,feedback=.5,amt=.5)
 // tanh(x=1) = tanh value multiplied by x (s-curve distortion)
 // out(vol=1) = send value to speakers
@@ -849,65 +850,83 @@ const initial = `\
 //
 // all changes are saved immediately and refresh
 // brings back the state as it was. to reset it
-// type in devtools console: delete localStorage.last
+// type in devtools console:
+//   delete localStorage.last
+//
+// enjoy :)
 
-var kick = mod(1/4).sinw(60).exp(15).tanh(6)
-  .on(8,1/2).vol(0)()
+var kick =
+  mod(1/4).sinw(60).exp(20).tanh(6)
+  .on(8,1/2).vol(0)
   // .delay(1/8,.5)
   // .send('fx')
-  .out(.7)
+  .out(.5)
+  .send('reverb',.12)
 
-var hihat = mod(1/16).noisew(1).exp(30)
+var hihat =
+  mod(1/16).noisew(1).exp(30)
   .patv('.1 .4 1 .4')
-  .on(8,1/4).patv('1.5 15',1/32)()
+  .on(8,1/4).patv('1.5 15',1/32)
   .hs(16000)
   // .bp(2000,3,1)
   .bp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
-  .on(8,2).vol(0)()
+  .on(8,2).vol(0)
   .out(.23)
   // .send('fx')
 
-var bass_melody = val(50)
-  .on(8,1/8).val(70)()
-  .on(8,1/2,16).mul(1.5)()
-  .on(16,1/2).mul(2)()
+var bass_melody =
+  val(50)
+  .on(8,1/8).val(70)
+  .on(8,1/2,16).mul(1.5)
+  .on(16,1/2).mul(2)
 
-// var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
-  // .on(8,1/8).val(70)()
-  // .on(8,1/2,16).mul(1.5)()
-  // .on(16,1/2).mul(2)()
+// // // var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
+  // // // .on(8,1/8).val(70)()
+  // // // .on(8,1/2,16).mul(1.5)()
+  // // // .on(16,1/2).mul(2)()
 
-var bass = mod(1/16).pulsew(bass_melody).exp(10)
+var bass =
+  mod(1/16).pulsew(bass_melody).exp(10)
   .patv('.1 .1 .5 1')
-  .lp(600,1.2)
-  .out(.7)
+  .lp(700,1.2)
+  .out(.35)
+  .send('reverb',.05)
 
-var clap = mod(1/4).noisew(8).exp(110)
+var clap =
+  mod(1/4).noisew(8).exp(110)
   .push().offt(.986).noisew(10).exp(110).vol(1.25)
   .push().offt(.976).noisew(8).exp(110).vol(.9)
   .push().noisew(8).exp(8.5).vol(.1)
   .join()
   .patv('- 1')
   .bp(1200,1.7,1)
-  .out(.45).on(8,1/4).send('fx')()
+  .on(8,1/4).send('fx')
+  .send('reverb',.5)
+  .out(.45)
 
-var crash = on(1,1,16).mod(16).noisew(1).exp(.2)
+var crash =
+  on(1,1,16)
+  .noisew(1)
   .bp(6000)
   .bp(14000)
-  .out(.15)()
+  .out(.07)
 
-var delay_w_fade_out = val(send.fx)
+var delay_w_fade_out =
+  val(send.fx)
   .delay(1/6,.45,1)
-  .bp(18000-mod(1).val(10000).exp(1),1,1)
-  .out(1.8)
+  .bp(18000,3,1-mod(1).val(.5).exp(1))
+  .out(1)
+
+var reverb_out =
+  val(send.reverb)
+  .daverb({ wet: 1 })
+  .out(.6)
 
 send.out
   .on(2,1,32)
   .slidev('1.1 - - - 1.1 - - - 1.1 - 1.2 - 1 - 1 -', 1/16, 5)
-  ()
   .on(8,2)
-  .vol(.65)
-  .bp(2000+sint(1/32)*1800,5)
+  .vol(.65).bp(2000+sint(1/32)*1800,5)
   ()
 `;
 
@@ -923,7 +942,12 @@ let hasChanged = false;
 
 let n = 0;
 
+const readyCallbacks = [];
+
 const methods$1 = {
+  ready () {
+    readyCallbacks.splice(0).forEach(cb => cb());
+  },
   play (worker, data) {
     n = data.n;
     updateInProgress = false;
@@ -951,11 +975,13 @@ const requestNextBuffer = () => {
   worker.postMessage({ call: 'play' });
 };
 
-const updateRenderFunction = () => {
-  if (updateInProgress) return
+const updateRenderFunction = (force = false) => {
+  if (updateInProgress && !force) return
 
   hasChanged = false;
   updateInProgress = true;
+
+  console.log('updating function');
 
   worker.postMessage({
     call: 'updateRenderFunction',
@@ -964,7 +990,7 @@ const updateRenderFunction = () => {
   });
 };
 
-let toggle = () => {
+let toggle = async () => {
   audio = new AudioContext({
     numberOfChannels,
     sampleRate,
@@ -984,6 +1010,10 @@ let toggle = () => {
     sampleRate,
     beatRate: node.beatRate
   });
+
+  await new Promise(resolve => readyCallbacks.push(resolve));
+
+  console.log('received worker ready');
 
   node.onbar = () => {
     if (hasChanged) {
@@ -1012,7 +1042,8 @@ let toggle = () => {
   start();
 };
 
-setTimeout(() => {
+document.body.onclick = () => {
+  document.body.onclick = () => {};
   document.body.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.stopPropagation();
@@ -1020,9 +1051,11 @@ setTimeout(() => {
       toggle();
       return false
     }
-    if (e.key === 's' && (e.ctrlKey || e.metaKey)) ;
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      updateRenderFunction(true);
+    }
   }, { capture: true });
-}, 800);
+};
 
 const main = async () => {
   editor = new Editor({
@@ -1048,6 +1081,13 @@ const main = async () => {
   editor.rect = editor.canvas.getBoundingClientRect();
 
   registerEvents(document.body);
+
+  window.onresize = () => {
+    editor.resize({
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
+  };
 };
 
 main();
