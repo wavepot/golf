@@ -15,14 +15,14 @@ export default sr => {
     }).filter(Boolean))
 
   return type => {
-    let pos = 0.0
     let index = 0
     const table = tables[type]
     const fn = (c,hz) => {
-      index = pos
-      pos = (pos + hz) % sr
+      index = fn.pos
+      fn.pos = (fn.pos + hz) % sr
       return table[index|0]
     }
+    fn.pos = 0
     return fn
   }
 }

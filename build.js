@@ -808,6 +808,34 @@ class Shared32Array {
   }
 }
 
+// hacky way to switch api urls from dev to prod
+const API_URL = location.port.length === 4
+  ? 'http://localhost:3000' : location.origin;
+
+let samples = new Map;
+
+const fetchSample = async (audio, remoteUrl) => {
+  const url = API_URL + '/fetch?url=' + encodeURIComponent(remoteUrl);
+
+  let sample = samples.get(remoteUrl);
+
+  if (!sample) {
+    const res = await fetch(url);
+    const arrayBuffer = await res.arrayBuffer();
+    const audioBuffer = await audio.decodeAudioData(arrayBuffer);
+    const floats = Array(audioBuffer.numberOfChannels).fill(0)
+      .map((_, i) => audioBuffer.getChannelData(i));
+    sample = floats.map(buf => {
+      const shared = new Shared32Array(buf.length);
+      shared.set(buf);
+      return shared
+    });
+    samples.set(remoteUrl, sample);
+  }
+
+  return sample
+};
+
 const initial = `\
 // guide:
 //
@@ -856,71 +884,80 @@ const initial = `\
 // enjoy :)
 
 var kick =
-  mod(1/4).sinw(60).exp(20).tanh(6)
-  .on(8,1/2).vol(0)
-  // .delay(1/8,.5)
-  // .send('fx')
-  .out(.5)
-  .send('reverb',.12)
+  mod(1/4).sinm(mod(1/4).val(42.881).exp(.057))
+  .exp(8.82).tanh(15.18)
+  .out(.4)
 
-var hihat =
-  mod(1/16).noisew(1).exp(30)
-  .patv('.1 .4 1 .4')
-  .on(8,1/4).patv('1.5 15',1/32)
-  .hs(16000)
-  // .bp(2000,3,1)
-  .bp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
-  .on(8,2).vol(0)
-  .out(.23)
-  // .send('fx')
-
-var bass_melody =
-  val(50)
-  .on(8,1/8).val(70)
-  .on(8,1/2,16).mul(1.5)
-  .on(16,1/2).mul(2)
-
-// // // var bass_melody = slide('e3 f3 f#3 a9',1/16,2)
-  // // // .on(8,1/8).val(70)()
-  // // // .on(8,1/2,16).mul(1.5)()
-  // // // .on(16,1/2).mul(2)()
-
-var bass =
-  mod(1/16).pulsew(bass_melody).exp(10)
-  .patv('.1 .1 .5 1')
-  .lp(700,1.2)
-  .out(.35)
-  .send('reverb',.05)
-
-var clap =
-  mod(1/4).noisew(8).exp(110)
-  .push().offt(.986).noisew(10).exp(110).vol(1.25)
-  .push().offt(.976).noisew(8).exp(110).vol(.9)
-  .push().noisew(8).exp(8.5).vol(.1)
-  .join()
-  .patv('- 1')
-  .bp(1200,1.7,1)
-  .on(8,1/4).send('fx')
-  .send('reverb',.5)
-  .out(.45)
+var snare =
+  mod(1/2).sample('freesound:220752',-19025,.95)
+  .slidev('- - 1 -',1/8,.5)
+    .patv('- - 1 .3',1/8)
+    .tanh(2)
+    .daverb()
+  .out(.4)
 
 var crash =
-  on(1,1,16)
+  on(1,2,8)
   .noisew(1)
   .bp(6000)
   .bp(14000)
   .out(.07)
 
-var delay_w_fade_out =
-  val(send.fx)
-  .delay(1/6,.45,1)
-  .bp(18000,3,1-mod(1).val(.5).exp(1))
-  .out(1)
+var sitar =
+  sample('freesound:350547').daverb().out()
 
-var reverb_out =
-  val(send.reverb)
-  .daverb({ wet: 1 })
-  .out(.6)
+var the_future =
+  sample('freesound:166834')
+  .daverb({
+    wet: .5,
+    preDelay: 1000,
+    bandwidth: .22,
+    inputDiffusion1: .8,
+    inputDiffusion2: .7,
+    decay: .6,
+    damping: .092,
+    decayDiffusion1: .89,
+    decayDiffusion2: .87,
+    excursionRate: .25,
+    excursionDepth: .12
+  })
+  .hs(5000,1,-15,.5)
+  .delay(16/(512+(420*sint(1/64))),.8).bpp(3000,.12,.5)
+  .out(.7)
+
+// var hihat =
+//   mod(1/16).noisew(1).exp(30)
+//   .patv('.1 .4 1 .4')
+//   .on(8,1/4).patv('1.5 15',1/32)
+//   .hs(16000)
+//   // .bp(2000,3,1)
+//   .bp(500+mod(1/2).val(8000).exp(2.85),.5,.5)
+//   .on(8,2).vol(0)
+//   .out(.23)
+
+// var clap =
+//   mod(1/4).noisew(8).exp(110)
+//   .push().offt(.986).noisew(10).exp(110).vol(1.25)
+//   .push().offt(.976).noisew(8).exp(110).vol(.9)
+//   .push().noisew(8).exp(8.5).vol(.1)
+//   .join()
+//   .patv('- 1')
+//   .bp(1200,1.7,1)
+//   .on(8,1/4).send('fx')
+//   .send('reverb',.5)
+//   .out(.45)
+
+// var bass_melody =
+//   val(50)
+//   .on(8,1/8).val(70)
+//   .on(8,1/2,16).mul(1.5)
+//   .on(16,1/2).mul(2)
+
+// var bass =
+//   mod(1/16).pulsew(bass_melody).exp(10)
+//   .patv('.1 .1 .5 1')
+//   .lp(700,1.2)
+//   .out(.35)
 
 send.out
   .on(2,1,32)
@@ -952,13 +989,29 @@ const methods$1 = {
     n = data.n;
     updateInProgress = false;
     node.playBuffer(worker.buffer);
+  },
+  async fetchSample (worker, { url }) {
+    const sample = await fetchSample(audio, url);
+    return { sample }
   }
 };
 
 const workerUrl = new URL('render-worker.js', import.meta.url);
 const worker = new Worker(workerUrl, { type: 'module' });
-worker.onmessage = ({ data }) => {
-  methods$1[data.call](worker, data);
+worker.onmessage = async ({ data }) => {
+  let result;
+  try {
+    result = await methods$1[data.call](worker, data);
+  } catch (error) {
+    result = { error };
+  }
+  if (data.callback) {
+    worker.postMessage({
+      call: 'callback',
+      callback: data.callback,
+      ...result
+    });
+  }
 };
 worker.onerror = error => {
   updateInProgress = false;

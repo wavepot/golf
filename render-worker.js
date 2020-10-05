@@ -52,8 +52,9 @@ const actless = actlessProxy()
 const Fluent = (api, method) => {
   const init = (a0,a1,a2,a3,a4) => {
     let c = contexts[i_c]
-    if (!c) {
+    if (!c || c._checksum !== method + a0) {
       c = contexts[i_c] = Context()
+      c._checksum = method + a0
 
       c.o = () => c.o
 
@@ -137,6 +138,28 @@ const Context = () => ({
 
 Object.assign($, Context())
 
+const samples = {}
+const sampler = (c,s,offset=0,stretch=1) => {
+  // let N = s[0].length %
+  let x = (c.n+offset)
+
+  if (Number.isFinite(c._mod)) {
+    let N = c._mod*c.$.br
+    x = (x % N + N) % N
+  }
+
+  return s[0][Math.floor((x*stretch) % s[0].length)]
+}
+const fetchSample = async (url) => {
+  try {
+    const { sample } = await rpc({ call: 'fetchSample', url })
+    samples[url] = sample
+  } catch (error) {
+    delete samples[url]
+    console.error(error)
+  }
+}
+
 const create = () => {
   const context = Context()
   const PI = Math.PI
@@ -144,7 +167,14 @@ const create = () => {
   const freqToFloat = (freq = 500) => toFinite(freq / ($.sr / 2))
   const join = (c) => c._spare.splice(0).reduce((p,n)=>p+n,c.x0)
   const push = (c) => { c._spare.push(c.x0) }
-
+  const sample = (c,x,offset,stretch) => {
+    let s = samples[x]
+    if (!s) {
+      s = samples[x] = [new Float32Array()]
+      fetchSample(x)
+    }
+    return sampler(c,s,offset,stretch)
+  }
   const eq = (c,...f) => {
     f.filter(Boolean).map(([[b0,b1,b2,a1,a2],amt=1],i) => {
       i = c._i_e
@@ -190,11 +220,12 @@ const create = () => {
     x = x * 4
     c.s = c.s % x
     c.t = c.t % x
-    c.p = c.n % (x*c.$.br)
+    c.p = Math.floor(c.n % (x*c.$.br))
     c._mod = x
   }
   const repeat = mod
   const offt = (c,x) => { c.t=toFinite((c.t+x)%c._mod) }
+  const offp = (c,x) => { c.p=toFinite((c.p+x)%(c._mod*c.$.br)) }
   const vol = (c,x) => c.x0*x
   const mul = vol
   const add = (c,x) => { c.x0 += x }
@@ -251,6 +282,7 @@ const create = () => {
   const api = {
     join,
     push,
+    sample,
     delay,
     daverb,
     hz,
@@ -259,6 +291,7 @@ const create = () => {
     tanh,
     mod,
     offt,
+    offp,
     note,
     pat,
     patv,
@@ -295,6 +328,22 @@ const create = () => {
       return [key+'w',genfn]
     })))
 
+  Object.assign(api, Object.fromEntries(
+    wavetable_oscs.map(key => {
+      const genfn = (c,x,shift=0) => {
+        let fn = wavetables[key][wavetables_index[key]]
+        if (!fn) {
+          fn = wavetables[key][wavetables_index[key]] = wavetable(key)
+        }
+        wavetables_index[key]++
+        if (c.p === 0) {
+          fn.pos = shift
+        }
+        return fn(c,x,shift)
+      }
+      return [key+'m',genfn]
+    })))
+
   const o = Object.fromEntries(
     Object.entries(api).map(([k,v]) =>
       [k,Fluent(api, k)]))
@@ -323,6 +372,24 @@ $.clear = i => {
   $.t = $.n/$.br // TODO: c.br = beatrate
 }
 
+let callbackId = 1
+const callbacks = new Map
+
+const rpc = (message, callback) => {
+  return new Promise((resolve, reject) => {
+    const id = callbackId++
+    callbacks.set(id, data => {
+      callbacks.delete(id)
+      if (data.error) {
+        reject(data.error)
+      } else {
+        resolve(data)
+      }
+    })
+    postMessage({ ...message, callback: id })
+  })
+}
+
 const methods = {
   async setup (data) {
     buffer = data.buffer
@@ -331,6 +398,9 @@ const methods = {
     wavetable = Wavetable($.sr)
     Object.assign(api, biquad($.sr))
     postMessage({ call: 'ready' })
+  },
+  callback (data) {
+    callbacks.get(data.callback)(data)
   },
   updateRenderFunction ({ value, n }) {
     api.$ = $
