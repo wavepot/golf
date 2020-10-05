@@ -5,8 +5,17 @@ import Osc from './osc.js'
 import {
   toFinite,
   clamp,
-  proxify
+  captureOneProxy,
+  captureManyProxy,
+  actlessProxy,
 } from './util.js'
+
+let once = 3
+console.once = (...args) => {
+  if (once === 0) return
+  --once
+  console.log(...args)
+}
 
 const filterKeys = Object.keys(biquad())
 
@@ -27,24 +36,42 @@ const wavetables = Object.fromEntries(
   wavetable_oscs.map(key => [key, []]))
 let wavetable
 
+const on = [
+  (c,count,beat,mod) => { c._on = [count,beat,mod] },
+  (run, { $, _on: [count,beat,mod=count] }) => {
+    Math.floor($.t/(beat*4))%mod === count-1 && run()
+  }
+]
+
+const actless = actlessProxy()
+
 const Fluent = (api, method) => {
   const init = (a0,a1,a2,a3,a4) => {
     let c = contexts[i_c]
     if (!c) {
       c = contexts[i_c] = Context()
 
-      c.o = {}
+      c.o = () => c.o
 
       Object.assign(c.o, Object.fromEntries(
         Object.entries(api).map(([k, v]) => [k,
-          Array.isArray(v)
-          ? proxify(c, v, c.o)
-          : (a0,a1,a2,a3,a4) => {
-
+          (a0,a1,a2,a3,a4) => {
             c.x0 = toFinite(v(c,a0,a1,a2,a3,a4) ?? c.x0)
             return c.o
           }
         ])))
+
+      c.o.on = captureManyProxy(c, c.o, on[0], on[1])
+      // c.o.onmany = captureManyProxy(c, c.o, on[0], on[1])
+      c.o.onall = (count,beat,mod) => {
+        if (Math.floor($.t/(beat*4))%mod === count-1) {
+          return c.o
+        } else {
+          return actless
+        }
+      }
+
+      c.o.and = c.o
 
       c.o.valueOf =
       c.o[Symbol.toPrimitive] = () => c.x0
@@ -163,12 +190,6 @@ const create = () => {
   const mul = vol
   const add = (c,x) => { c.x0 += x }
   const out = (c,x=1) => { o.send.out.add(c.x0*x) }
-  const on = [
-    (c,count,beat,mod) => { c._on = [count,beat,mod] },
-    (run, { $, _on: [count,beat,mod=count] }) => {
-      Math.floor($.t/(beat*4))%mod === count-1 && run()
-    }
-  ]
   const send = (c,key,amt=1) => {
     if (key in sends) {
       o.send[key].add(c.x0*amt)
@@ -176,6 +197,7 @@ const create = () => {
       o.send[key] = sends[key] = o.val(c.x0*amt)
     }
   }
+  const xon = () => {}
   const notes = 'ccddeffggaab'
   const stringToNote = s => {
     s = s.split('')
@@ -240,7 +262,7 @@ const create = () => {
     mul,
     add,
     out,
-    on,
+    xon,
   }
 
   Object.assign(api, Osc('s'))
@@ -267,6 +289,8 @@ const create = () => {
     Object.entries(api).map(([k,v]) =>
       [k,Fluent(api, k)]))
 
+  o.on = Fluent(api, 'onall')
+
   return o
 }
 
@@ -289,12 +313,13 @@ $.clear = i => {
 }
 
 const methods = {
-  setup (data) {
+  async setup (data) {
     buffer = data.buffer
-    $.sr = data.sampleRate
+    $.sr = self.sampleRate = data.sampleRate
     $.br = data.beatRate
     wavetable = Wavetable($.sr)
     Object.assign(api, biquad($.sr))
+    postMessage({ call: 'ready' })
   },
   updateRenderFunction ({ value, n }) {
     api.$ = $
