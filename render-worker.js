@@ -2,11 +2,13 @@ import biquad from './biquad.js'
 import Delay from './delay.js'
 import Daverb from './daverb.js'
 import Wavetable from './wavetable.js'
+import Plot from './plot.js'
 import Osc from './osc.js'
 import {
   toFinite,
   clamp,
   captureOneProxy,
+  captureAllProxy,
   captureManyProxy,
   actlessProxy,
 } from './util.js'
@@ -18,8 +20,16 @@ console.once = (...args) => {
   console.log(...args)
 }
 
+let backCanvas, backCanvasDims
+
 const filterKeys = Object.keys(biquad())
 
+const $ = {
+  _out: [new Float32Array],
+  sends: {}
+}
+
+// TODO: pools
 let i_c = 0
 const contexts = []
 
@@ -29,7 +39,25 @@ const delays = []
 let i_dv = 0
 const daverbs = []
 
-const sends = {}
+let i_pl = 0
+const plots = []
+plots.setup = ({ canvas, width, height, pixelRatio }) => {
+  plots.canvas = canvas
+  plots.pixelRatio = pixelRatio
+  plots.ctx = plots.canvas.getContext('2d')
+  plots.resize({ width, height })
+}
+plots.resize = ({ width, height }) => {
+  plots.width = width
+  plots.height = height
+  plots.canvas.width = width * plots.pixelRatio
+  plots.canvas.height = height * plots.pixelRatio
+  plots.ctx.scale(plots.pixelRatio, plots.pixelRatio)
+  plots.forEach(p => p.resize({ width, height }))
+}
+plots.clear = () => {
+  plots.ctx.clearRect(0,0,plots.width,plots.height)
+}
 
 const patterns = {}
 
@@ -67,7 +95,7 @@ const Fluent = (api, method) => {
         ])))
 
       c.o.on = captureManyProxy(c, c.o, on[0], on[1])
-      // c.o.onmany = captureManyProxy(c, c.o, on[0], on[1])
+
       c.o.onall = (count,beat,mod) => {
         if (Math.floor($.t/(beat*4))%mod === count-1) {
           return c.o
@@ -76,10 +104,29 @@ const Fluent = (api, method) => {
         }
       }
 
-      c.o.and = c.o
-
       c.o.valueOf =
       c.o[Symbol.toPrimitive] = () => c.x0
+
+      if (method === 'plot') {
+        c.o.plot = captureAllProxy(c, (calls, size) => {
+          let p = plots[i_pl]
+          if (!p || p.size !== size) p = plots[i_pl] = Plot(plots, size)
+          p.c = c
+          p.size = size
+          p.calls = calls
+          i_pl++
+        }, (prop) => {
+          if (prop === 'delay') {
+            i_d++
+          }
+          if (prop === 'daverb') {
+            i_dv++
+          }
+          if (wavetable_oscs.includes(prop.slice(0,3)) && ['w','m'].includes(prop[3])) {
+            wavetables_index[prop]++
+          }
+        })
+      }
     }
 
     i_c++
@@ -112,7 +159,7 @@ const Fluent = (api, method) => {
   return init
 }
 
-const $ = {
+const $pl = {
   _out: [new Float32Array]
 }
 
@@ -201,12 +248,12 @@ const create = () => {
     })
   }
   const delay = (c,sig=1/16,feedback=.5,amt=.5) => {
-    let d = delays[i_d] = delays[i_d] ?? new Delay($.br*8)
+    let d = delays[i_d] = delays[i_d] ?? new Delay(c.$.br*8)
     i_d++
-    return d.delay(Math.floor($.br*4*sig)).feedback(feedback).run(c.x0, amt)
+    return d.delay(Math.floor(c.$.br*4*sig)).feedback(feedback).run(c.x0, amt)
   }
   const daverb = (c,x={}) => {
-    let dv = daverbs[i_dv] = daverbs[i_dv] ?? new Daverb($.sr)
+    let dv = daverbs[i_dv] = daverbs[i_dv] ?? new Daverb(c.$.sr)
     i_dv++
     return c.x0 * (x.dry??0.6) + dv.process(c.x0,x)
   }
@@ -214,6 +261,12 @@ const create = () => {
   const hz = (c,x) => c.s*x
   const bt = (c,x) => c.t*(1/(x*16))
   const exp = (c,x=10) => c.x0*Math.exp(-c.t*x)
+  const abs = (c) => Math.abs(c.x0)
+  const atan = (c,x) => Math.atan(c.x0*x)
+  const min = (c,x) => Math.min(c.x0, x)
+  const max = (c,x) => Math.max(c.x0, x)
+  const hi = min
+  const lo = max
   const tanh = (c,x=1) => Math.tanh(c.x0*x)
   const mod = (c,x=1) => {
     x = toFinite(x) || 1
@@ -229,12 +282,12 @@ const create = () => {
   const vol = (c,x) => c.x0*x
   const mul = vol
   const add = (c,x) => { c.x0 += x }
-  const out = (c,x=1) => { o.send.out.add(c.x0*x) }
+  const out = (c,x=1) => { c.$.o.send.out.add(c.x0*x) }
   const send = (c,key,amt=1) => {
-    if (key in sends) {
-      o.send[key].add(c.x0*amt)
+    if (key in c.$.sends) {
+      c.$.o.send[key].add(c.x0*amt)
     } else {
-      o.send[key] = sends[key] = o.val(c.x0*amt)
+      c.$.o.send[key] = c.$.sends[key] = c.$.o.val(c.x0*amt)
     }
   }
   const xon = () => {}
@@ -266,13 +319,13 @@ const create = () => {
   let _pat // TODO: memoize()
   const pat = (c,x,_mod=c._mod/4) => {
     _pat = patterns[x] = patterns[x] ?? parsePattern(x)
-    return _pat[Math.floor(($.t/(_mod*4))%_pat.length)]
+    return _pat[Math.floor((c.$.t/(_mod*4))%_pat.length)]
   }
   const patv = (c,x,_mod) => c.x0 * pat(c,x,_mod)
   let _pos, _now, _next, _alpha
   const slide = (c,x,_mod,speed=1) => {
     _pat = patterns[x] = patterns[x] ?? parsePattern(x)
-    _pos = $.t/(_mod*4)%_pat.length
+    _pos = c.$.t/(_mod*4)%_pat.length
     _now = Math.floor(_pos)
     _next = (_now + 1)%_pat.length
     _alpha = _pos - _now
@@ -288,6 +341,12 @@ const create = () => {
     hz,
     bt,
     exp,
+    abs,
+    atan,
+    min,
+    max,
+    hi,
+    lo,
     tanh,
     mod,
     offt,
@@ -306,6 +365,7 @@ const create = () => {
     add,
     out,
     xon,
+    plot: () => {},
   }
 
   Object.assign(api, Osc('s'))
@@ -359,13 +419,13 @@ const api = create()
 let buffer
 let prev, render
 
-$.clear = i => {
+const clear = ($) => {
   let key
 
   // reset pools
-  i_c = i_d = i_dv = 0
+  i_c = i_d = i_dv = i_pl = 0
 
-  for (key in sends) api.send[key] = api.val(0)
+  for (key in $.sends) $.o.send[key] = $.o.val(0)
   for (key in wavetables_index) wavetables_index[key] = 0
 
   $.s = $.n/$.sr
@@ -395,15 +455,22 @@ const methods = {
     buffer = data.buffer
     $.sr = self.sampleRate = data.sampleRate
     $.br = data.beatRate
+    if (!plots.canvas) {
+      plots.setup(data)
+    }
     wavetable = Wavetable($.sr)
     Object.assign(api, biquad($.sr))
     postMessage({ call: 'ready' })
+  },
+  resize (data) {
+    plots.resize(data)
   },
   callback (data) {
     callbacks.get(data.callback)(data)
   },
   updateRenderFunction ({ value, n }) {
     api.$ = $
+    api.$.o = api
     api.sr = $.sr
     api.br = $.br
     prev = render
@@ -420,7 +487,8 @@ const methods = {
 
     $._out[0] = buffer[0]
 
-    $.clear(0)
+    $.i = 0
+    clear($)
     try {
       render()
     } catch (err) {
@@ -429,10 +497,45 @@ const methods = {
       render()
     }
 
+    let i_pl_bak = i_pl
+    for (let i = 0; i < i_pl; i++) {
+      let p = plots[i]
+      let o = p.c.o
+      p.c.$ = plots
+      p.c.$.o = p.c.o
+      p.c.$._out = [p.buffer]
+      p.c.$.sends = {}
+      p.c.o.val(0).send('out')
+      let len = p.buffer.length
+      let sr = len/p.size
+      p.c.$.sr = p.c.sr = sr
+      p.c.$.br = p.c.br = sr/4
+      for (plots.n = 0; plots.n < len; plots.n++) {
+        clear(p.c.$)
+        p.c.n = p.c.$.n
+        p.c.i = p.c.$.n
+        p.c.s = p.c.$.s
+        p.c.t = p.c.$.t
+        p.calls.forEach(([method,a0,a1,a2,a3,a4]) => {
+          p.c.o[method](a0,a1,a2,a3,a4)
+        })
+        p.c.$._out[0][p.c.n] = +p.c.o.send.out
+      }
+      p.c.$ = $
+    }
+
+    plots.clear()
+    for (let i = 0; i < i_pl_bak; i++) {
+      let p = plots[i]
+      if (i === 0) p.drawX()
+      p.drawY()
+      p.drawLine()
+    }
+
     $.n++
 
     for ($.i = 1; $.i < buffer[0].length; $.i++, $.n++) {
-      $.clear($.i)
+      clear($)
       render()
       $._out[0][$.i] = +api.send.out
     }

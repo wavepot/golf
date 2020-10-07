@@ -30,11 +30,12 @@ export const clamp = (min, max, n) => Math.max(min, Math.min(max, n))
 //   return init
 // }
 
-export const actlessProxy = () => {
+export const actlessProxy = (capture = () => {}) => {
   const chain = () => proxy
 
   const handler = {
     get (obj, prop) {
+      capture(prop)
       return chain
     },
     apply () {
@@ -45,6 +46,39 @@ export const actlessProxy = () => {
   const proxy = new Proxy(chain, handler)
 
   return proxy
+}
+
+export const captureAllProxy = (context, begin, capture) => {
+  const acc = []
+
+  const add = (a0,a1,a2,a3,a4) => {
+    acc[acc.length-1].push(a0,a1,a2,a3,a4)
+    return proxy
+  }
+
+  const handler = {
+    get (obj, prop) {
+      acc.push([prop])
+      return add
+    },
+    apply () {
+      return proxy
+    }
+  }
+
+  const proxy = new Proxy(() => {}, handler)
+
+  const actless = actlessProxy(capture)
+
+  return (a0,a1,a2,a3,a4) => {
+    if (context.i === 0) {
+      acc.splice(0)
+      begin(acc,a0,a1,a2,a4,a4)
+      return proxy
+    } else {
+      return actless
+    }
+  }
 }
 
 export const captureManyProxy = (context,parent,begin,end) => {
