@@ -2,6 +2,17 @@ export const toFinite = n => Number.isFinite(n) ? n : 0
 
 export const clamp = (min, max, n) => Math.max(min, Math.min(max, n))
 
+export const parseFn = fn => {
+  let s = fn.toString()
+  let [args, body] = (s.split('\n')[0].includes('=>')
+    ? s.split('=>')
+    : [s.slice(s.indexOf('('), s.indexOf(')')+1), s.slice(s.indexOf(' {'))]
+    ).map(s => s.trim())
+  args = args.replace(/[\(\)]/g, '').split(',')
+  let inner = body[0] === '{' ? body.split('\n').slice(1,-1).join('\n').trim() : body
+  return { args, body, inner }
+}
+
 // export const ProxyChain = () => {
 //   const acc = []
 

@@ -1,4 +1,4 @@
-import Editor, { registerEvents } from './editor.js'
+import Editor, { registerEvents } from './editor/editor.js'
 import LoopNode from './loop-node.js'
 import Shared32Array from './shared32array.js'
 import * as api from './api.js'
