@@ -4439,7 +4439,7 @@ class Editor {
     this.key = e.key.length === 1 ? e.key : null;
 
     if (!e.cmdKey && this.key) return this.insert(this.key)
-    if (e.key === 'Enter') return this.insert('\n')
+    if (!e.cmdKey && e.key === 'Enter') return this.insert('\n')
     if (!e.cmdKey && e.key === 'Backspace') return this.backspace()
     if (!e.cmdKey && !e.shiftKey && e.key === 'Delete') return this.delete()
 

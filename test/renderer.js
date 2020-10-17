@@ -23,7 +23,9 @@ describe('renderer.updateRenderFunction(code)', () => {
   it('should update render function with new code', () => {
     const last = renderer.renderFunction.toString()
 
-    renderer.updateRenderFunction('val(5).out()')
+    renderer.updateRenderFunction(`
+
+    `)
 
     expect(renderer.renderFunction.toString()).to.not.equal(last)
   })
@@ -32,8 +34,14 @@ describe('renderer.updateRenderFunction(code)', () => {
 describe('renderer.render()', () => {
   it('should render compiled render function', () => {
     renderer.render()
+    renderer.render()
+    renderer.render()
+    renderer.render()
+    renderer.render()
+    renderer.render()
+    renderer.render()
 
-    const out = renderer.mem.output[renderer.mem.loop.index]
-    expect(out.float.subarray(0,3)).to.be.buffer([2.5,2.5,2.5])
+    const out = renderer.mem.output //[renderer.mem.loop.index]
+    expect(out.subarray(0,3)).to.be.buffer([5,5,5]) //2.5,2.5,2.5])
   })
 })

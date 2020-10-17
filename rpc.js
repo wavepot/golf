@@ -1,8 +1,8 @@
 export default class Rpc {
-  constructor () {
-    this.callbackId = 0
-    this.callbacks = new Map
-  }
+  #callbackId = 0
+  #callbacks = new Map
+
+  constructor () {}
 
   postCall (method, data) {
     this.port.postMessage({ call: method, ...data })
@@ -10,39 +10,44 @@ export default class Rpc {
 
   rpc (method, data) {
     return new Promise((resolve, reject) => {
-      const id = this.callbackId++
+      const id = this.#callbackId++
 
-      this.callbacks.set(id, data => {
-        this.callbacks.delete(id)
+      this.#callbacks.set(id, data => {
+        this.#callbacks.delete(id)
         if (data.error) reject(data.error)
         else resolve(data)
       })
 
-      this.postCall(method, { callback: id, ...data })
+      this.postCall(method, { data, callback: id })
     })
   }
 
   callback (data) {
-    this.callbacks.get(data.callback)(data)
+    this.#callbacks.get(data.responseCallback)(data.data ?? data)
   }
 
   register (port) {
     this.port = port
 
     this.port.addEventListener('message', async ({ data }) => {
+      // console.log(data)
       if (!(data.call in this)) {
         throw new ReferenceError(data.call + ' is not a method')
       }
 
       let result
       try {
-        result = await this[data.call](data)
+        if (data.call === 'callback') {
+          result = await this[data.call](data)
+        } else {
+          result = await this[data.call](data.data)
+        }
       } catch (error) {
         result = { error }
       }
 
-      if (data.callback) {
-        this.postCall('callback', { ...result, callback: data.callback })
+      if ('callback' in data) {
+        this.postCall('callback', { data: result, responseCallback: data.callback })
       }
     })
 

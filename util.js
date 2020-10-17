@@ -9,9 +9,33 @@ export const parseFn = fn => {
     : [s.slice(s.indexOf('('), s.indexOf(')')+1), s.slice(s.indexOf(' {'))]
     ).map(s => s.trim())
   args = args.replace(/[\(\)]/g, '').split(',')
+  let argNames = args.map(a => a.split('=')[0])
   let inner = body[0] === '{' ? body.split('\n').slice(1,-1).join('\n').trim() : body
-  return { args, body, inner }
+  return { args, argNames, body, inner }
 }
+
+const notes = 'ccddeffggaab'
+export const stringToNote = s => {
+  s = s.split('')
+  let octave = parseInt(s[s.length - 1], 10)
+  if (isNaN(octave)) octave = 4
+  const note = s[0].toLowerCase()
+  const flat = s[1] === 'b'
+  const sharp = s[1] === '#'
+  return notes.indexOf(note) + (octave * 12) + sharp - flat
+}
+
+const EXCESS_WHITESPACE = / {1,}|\n/g
+const HAS_LETTER = /[a-zA-Z]/
+export const parsePattern = x => x
+  .replace(EXCESS_WHITESPACE, ' ') // remove excess whitespace
+  .trim() // and trim
+  .split(' ') // split to array of values
+  .map(n => toFinite(
+    HAS_LETTER.test(n)
+      ? stringToNote(n) // has a letter then it is a musical note
+      : parseFloat(n) // otherwise it's a scalar
+    ))
 
 // export const ProxyChain = () => {
 //   const acc = []
