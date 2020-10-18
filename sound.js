@@ -1,4 +1,5 @@
 import { parsePattern, stringToNote } from './util.js'
+import Shared32Array from './shared32array.js'
 import Biquad from './biquad.js'
 import Oscs from './osc.js'
 
@@ -15,6 +16,7 @@ class Sound {
     this._mod = Infinity
     this._wavetables_i = 0
     this._wavetables = new Array(100).fill(0)
+    this._plot_buffer = new Shared32Array(2048)
 
     const returnThis = () => this
     this._ignoreNext =
@@ -68,13 +70,28 @@ class Sound {
     return this
   }
 
-  exp (x=10) {
+  exp (x=1) {
     this.x0 *= Math.exp(-this.t * x)
+    return this
+  }
+
+  abs () {
+    this.x0 = Math.abs(this.x0)
     return this
   }
 
   tanh (x=1) {
     this.x0 = Math.tanh(this.x0 * x)
+    return this
+  }
+
+  atan (x=1) {
+    this.x0 = (2 / Math.PI)*Math.atan((Math.PI / 2) * this.x0 * x)
+    return this
+  }
+
+  soft (x=1) {
+    this.x0 = this.x0 / ((1/x) + Math.abs(this.x0))
     return this
   }
 
@@ -105,6 +122,21 @@ class Sound {
 
   out (x=1) {
     main.x0 += this.x0 * x
+    return this
+  }
+
+  plot (x=1) {
+    if (i === 0) {
+      this._plot_buffer.fill(0)
+    }
+    let co = bar / (2048*x)
+    if (i === bar - 1) {
+      worker.plot(this._plot_buffer, (1/x))
+      return this
+    }
+    if ((i % co)|0 === 0) {
+      this._plot_buffer[(i/co)|0] = this.x0
+    }
     return this
   }
 

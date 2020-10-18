@@ -1,7 +1,8 @@
-import Editor, { registerEvents } from './editor.js'
+import Editor, { registerEvents } from './editor/editor.js'
 import Shared32Array from './shared32array.js'
 import Rpc from './rpc.js'
 import * as Server from './server-api.js'
+import initial from './initial.js'
 
 self.bufferSize = 2**19
 self.buffers = [1,2,3].map(() => new Shared32Array(self.bufferSize))
@@ -15,6 +16,7 @@ class Wavepot extends Rpc {
     sampleIndex: 0,
     bufferSize: self.bufferSize,
     barSize: 0,
+    plot: {}
   }
 
   constructor () {
@@ -23,7 +25,7 @@ class Wavepot extends Rpc {
   }
 
   async setup () {
-    await this.rpc('setup', this.data)
+    await this.rpc('setup', this.data, [this.data.plot.backCanvas])
   }
 
   async compile () {
@@ -45,30 +47,64 @@ const worker = new Worker('wavepot-worker.js', { type: 'module' })
 const wavepot = new Wavepot()
 
 let editor
+const FILE_DELIMITER = '\n/* -^-^-^-^- */\n'
+let label = 'lastV4'
+let tracks = localStorage[label]
+if (tracks) tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track))
+else tracks = [{ id: 'initial', value: initial }]
 
 async function main () {
-  editor = new Editor({
-    id: 'main',
-    title: 'new-project.js',
+  const canvas = document.createElement('canvas')
+  canvas.className = 'back-canvas'
+  canvas.width = window.innerWidth*window.devicePixelRatio
+  canvas.height = window.innerHeight*window.devicePixelRatio
+  canvas.style.width = window.innerWidth + 'px'
+  canvas.style.height = window.innerHeight + 'px'
+  wavepot.data.plot.backCanvas = canvas.transferControlToOffscreen()
+  wavepot.data.plot.width = window.innerWidth
+  wavepot.data.plot.height = window.innerHeight
+  wavepot.data.plot.pixelRatio = window.devicePixelRatio
+  container.appendChild(canvas)
+
+  editor = window.editor = new Editor({
     // font: '/fonts/mononoki-Regular.woff2',
     // font: '/fonts/ClassCoder.woff2',
     font: '/fonts/labmono-regular-web.woff2',
-    value: localStorage.last ?? initial,
+    id: tracks[0].id,
+    value: tracks[0].value,
     fontSize: '10.5pt',
-    // fontSize: '16.4pt',
     padding: 3.5,
     titlebarHeight: 0,
     width: window.innerWidth,
     height: window.innerHeight,
   })
 
-  editor.onchange = async () => {
-    localStorage.last = editor.value
-    // await wavepot.compile()
-    // playNext()
+  tracks.slice(1).forEach(data => editor.addSubEditor(data))
+
+  let save = () => {
+    localStorage[label] = tracks.map(track => JSON.stringify(track)).join(FILE_DELIMITER)
+  }
+
+  editor.ontoadd = () => {
+    const id = (Math.random() * 10e6 | 0).toString(36)
+    const value = 'bpm(120)\n\nmod(1/4).saw(50).exp(10).out().plot()\n'
+    editor.addSubEditor({ id, value })
+  }
+
+  editor.onchange = (data) => {
+    const track = tracks.find(editor => editor.id === data.id)
+    if (track) track.value = data.value
+    save()
+  }
+  editor.onremove = (data) => {
+    const track = tracks.find(editor => editor.id === data.id)
+    if (track) {
+      tracks.splice(tracks.indexOf(track), 1)
+    }
+    save()
   }
   editor.onupdate = async () => {
-    localStorage.last = editor.value
+//    localStorage[label] = editor.value
   }
   container.appendChild(editor.canvas)
   editor.parent = document.body
@@ -77,6 +113,15 @@ async function main () {
   const events = registerEvents(document.body)
   editor.onsetup = () => {
     events.setTarget('focus', editor, { target: events.textarea, type: 'mouseenter' })
+
+    // leave time to setup
+    setTimeout(() => {
+      editor.onadd = (data) => {
+        tracks.push(data)
+        save()
+      }
+    }, 1000)
+
 
     document.body.addEventListener('keydown', e => {
       if (e.key === ' ' && (e.ctrlKey || e.metaKey)) {
@@ -118,8 +163,8 @@ async function main () {
     //   width: window.innerWidth,
     //   height: window.innerHeight
     // })
-    // canvas.style.width = window.innerWidth + 'px'
-    // canvas.style.height = window.innerHeight + 'px'
+    canvas.style.width = window.innerWidth + 'px'
+    canvas.style.height = window.innerHeight + 'px'
   }
 
   await wavepot.register(worker).setup()
