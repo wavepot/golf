@@ -3,6 +3,7 @@ import Shared32Array from './shared32array.js'
 import Rpc from './rpc.js'
 import * as Server from './server-api.js'
 import initial from './initial.js'
+import Shader from './shader/shader.js'
 
 self.bufferSize = 2**19
 self.buffers = [1,2,3].map(() => new Shared32Array(self.bufferSize))
@@ -29,8 +30,24 @@ class Wavepot extends Rpc {
   }
 
   async compile () {
-    const result = await this.rpc('compile', { code: editor.value })
-    console.log('compile: ', result)
+    let code = editor.value
+
+    try {
+      const { shaderFunc, rest } = shader.extractAndCompile(code)
+      shader.shaderFunc = shaderFunc
+      code = rest
+      if (shader.shaderFunc) {
+        console.log('compiled shader')
+      } else {
+        console.log('no shader')
+      }
+    } catch (error) {
+      console.error('Error compiling shader')
+      console.error(error)
+    }
+
+    const result = await this.rpc('compile', { code })
+    console.log('compiled sound: ', result)
   }
 
   async render (data) {
@@ -45,13 +62,14 @@ class Wavepot extends Rpc {
 
 const worker = new Worker('wavepot-worker.js', { type: 'module' })
 const wavepot = new Wavepot()
+const shader = new Shader(container)
 
 let editor
 const FILE_DELIMITER = '\n/* -^-^-^-^- */\n'
-let label = 'lastV4'
+let label = 'lastV5'
 let tracks = localStorage[label]
 if (tracks) tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track))
-else tracks = [{ id: 'initial', value: initial }]
+else tracks = initial.map(value => ({ id: ((Math.random()*10e6)|0).toString(36), value }))
 
 async function main () {
   const canvas = document.createElement('canvas')
@@ -122,7 +140,6 @@ async function main () {
       }
     }, 1000)
 
-
     document.body.addEventListener('keydown', e => {
       if (e.key === ' ' && (e.ctrlKey || e.metaKey)) {
         e.stopPropagation()
@@ -165,6 +182,8 @@ async function main () {
     // })
     canvas.style.width = window.innerWidth + 'px'
     canvas.style.height = window.innerHeight + 'px'
+
+    shader.resize()
   }
 
   await wavepot.register(worker).setup()
@@ -176,6 +195,10 @@ let audio,
     bar = {},
     isPlaying = false,
     playNext = () => {}
+
+let origSyncTime = 0
+let animFrame = 0
+let coeff = 1
 
 let toggle = async () => {
   audio = new AudioContext({
@@ -243,13 +266,12 @@ let toggle = async () => {
     if (offsetTime) {
       syncTime = getSyncTime()
     } else {
-      syncTime = audio.currentTime
+      syncTime = origSyncTime = audio.currentTime + 1
     }
 
     console.log('schedule for:', syncTime - offsetTime)
 
     offsetTime = syncTime
-
     if (bufferSourceNode) {
       bufferSourceNode.stop(syncTime)
     }
@@ -257,6 +279,8 @@ let toggle = async () => {
     barSize = bufferIndex
 
     const duration = barSize / sampleRate
+
+    coeff = sampleRate / barSize
 
     bufferSourceNode = audio.createBufferSource()
     bufferSourceNode.buffer = nextBuffer
@@ -290,11 +314,27 @@ let toggle = async () => {
     playNext()
   }
 
+  const startAnim = () => {
+    const tick = () => {
+      animFrame = requestAnimationFrame(tick)
+      shader.time = (audio.currentTime - origSyncTime) * coeff
+      shader.tick()
+    }
+    animFrame = requestAnimationFrame(tick)
+  }
+
+  const stopAnim = () => {
+    shader.stop()
+    cancelAnimationFrame(animFrame)
+  }
+
   const start = () => {
     isPlaying = true
     playNext()
+    startAnim()
     toggle = () => {
       bufferSourceNode?.stop(0)
+      stopAnim()
       offsetTime = 0
       isPlaying = false
       isRendering = false
