@@ -364,6 +364,8 @@ const getMethods = (obj) => {
 class Sound {
   constructor () {
     this.x0 = 0;
+    this.Lx0 = 0;
+    this.Rx0 = 0;
     this.t = 0;
     this._mod = Infinity;
     this._wavetables_i = 0;
@@ -427,8 +429,23 @@ class Sound {
     return this
   }
 
+  abs () {
+    this.x0 = Math.abs(this.x0);
+    return this
+  }
+
   tanh (x=1) {
     this.x0 = Math.tanh(this.x0 * x);
+    return this
+  }
+
+  atan (x=1) {
+    this.x0 = (2 / Math.PI)*Math.atan((Math.PI / 2) * this.x0 * x);
+    return this
+  }
+
+  soft (x=1) {
+    this.x0 = this.x0 / ((1/x) + Math.abs(this.x0));
     return this
   }
 
@@ -454,6 +471,12 @@ class Sound {
   daverb (x={}) {
     let d = _daverbs[_daverbs_i++];
     this.x0 = d.process(this.x0, x);
+    return this
+  }
+
+  panout (LR=0,x=1) { // -1..+1  0=center
+    main.Lx0 += this.x0 * x * (1-(.5 + .5*LR));
+    main.Rx0 += this.x0 * x *    (.5 + .5*LR);
     return this
   }
 
@@ -894,8 +917,8 @@ self.pi2 = Math.PI * 2;
 // audio
 self.bufferSize = 2**19;
 self.sampleRate = 44100;
-self.buffer = new Float32Array(88200);
-self.numberOfChannels = 1;
+self.buffer = [new Float32Array([0]),new Float32Array([0])];
+self.numberOfChannels = 2;
 
 // clock
 self.real_n = 0; // this doesn't adjust by bpm
@@ -983,7 +1006,9 @@ const compile = (code) => {
   let src = `
 console.log('n is:', n)
 for (i = 0; i < bufferSize; i++) {
-  if (i > 50000 && ((i % (bar|0)) === 0)) {
+  // make sure we have enough buffer to escape glitches
+  // and that it divides to bars so it's rhythmic if it does
+  if (i > 50000 && ((i % bar) === 0)) {
     break
   }
 
@@ -993,24 +1018,32 @@ for (i = 0; i < bufferSize; i++) {
 
   ${code.split('\n\n').join(`
 
-  // TODO: use better heuristics
+  // space out effects so they don't interfere
+  // much when commenting out sounds
+  // TODO: this is awful, use better heuristics
   _biquads_i += 5
   _daverbs_i += 5
   _delays_i += 5
 
   `)}
 
-  buffer[i] = main.x0.toFinite()
+  buffer[0][i] = main.x0.toFinite()*.5 + main.Lx0.toFinite()
+  buffer[1][i] = main.x0.toFinite()*.5 + main.Rx0.toFinite()
   sounds_i =
   _biquads_i =
   _daverbs_i =
   _delays_i =
-  main.x0 = 0
+  main.Lx0 = main.Rx0 = main.x0 = 0
 }
 
 return { bufferIndex: i, bpm: _bpm }
   `;
-  let func = new Function(Object.keys(self.api), src).bind(null, ...Object.values(self.api));
+
+  let func = new Function(
+    Object.keys(self.api),
+    src
+  ).bind(null, ...Object.values(self.api));
+
   return func
 };
 
