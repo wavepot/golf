@@ -92,7 +92,7 @@ class Editor {
     this.canvas.style.height = data.height + 'px';
 
     if (!this.pseudoWorker) {
-      const workerUrl = new URL('worker.js', import.meta.url).href;
+      const workerUrl = new URL('editor-worker.js', import.meta.url).href;
       this.worker = new Worker(workerUrl, { type: 'module' });
       this.worker.onerror = error => this._onerror(error);
       this.worker.onmessage = ({ data }) => this['_' + data.call](data);
@@ -102,10 +102,14 @@ class Editor {
   }
 
   async setupPseudoWorker () {
-    const PseudoWorker = await import(new URL('worker.js', import.meta.url));
+    const PseudoWorker = await import(new URL('editor-worker.js', import.meta.url));
     this.worker = new PseudoWorker();
     this.worker.onerror = error => this._onerror(error);
     this.worker.onmessage = ({ data }) => this['_' + data.call](data);
+  }
+
+  setColor (color) {
+    this.worker.postMessage({ call: 'setColor', color });
   }
 
   destroy () {
@@ -683,8 +687,8 @@ class Shared32Array {
 }
 
 class Rpc {
-  #callbackId = 0
-  #callbacks = new Map
+  callbackId = 0
+  callbacks = new Map
 
   constructor () {}
 
@@ -694,10 +698,10 @@ class Rpc {
 
   rpc (method, data, tx) {
     return new Promise((resolve, reject) => {
-      const id = this.#callbackId++;
+      const id = this.callbackId++;
 
-      this.#callbacks.set(id, data => {
-        this.#callbacks.delete(id);
+      this.callbacks.set(id, data => {
+        this.callbacks.delete(id);
         if (data.error) reject(data.error);
         else resolve(data);
       });
@@ -707,7 +711,7 @@ class Rpc {
   }
 
   callback (data) {
-    this.#callbacks.get(data.responseCallback)(data.data ?? data);
+    this.callbacks.get(data.responseCallback)(data.data ?? data);
   }
 
   register (port) {
@@ -749,9 +753,7 @@ class Rpc {
   }
 }
 
-// hacky way to switch api urls from dev to prod
-const API_URL = location.port.length === 4
-  ? 'http://localhost:3000' : location.origin;
+const API_URL = !location.port ? location.origin : 'http://localhost:3000';
 
 let samples = new Map;
 
@@ -838,7 +840,8 @@ pulse(
   .lp(700,1.2)
   .on(4,8).delay(1/(512+200*mod(1).sin(1)),.8)
   .on(1,8,16).vol(0)
-  .out(.35)
+  .widen(.4)
+  .out(.35,.15)
 
 mod(1/16).noise(333).exp(30)
   .vol('.1 .4 1 .4'.seq(1/16))
@@ -846,20 +849,23 @@ mod(1/16).noise(333).exp(30)
   .hs(16000)
   .bp(500+mod(1/4).val(8000).exp(2.85),.5,.5)
   .on(8,2).vol(0)
-  .out(.2)
+  .widen(.7)
+  .out(.2,.3)
 
-mod(1/2).play('freesound:220752'.sample[0],-19025,1)
+mod(1/2).stereo().play('freesound:220752'.sample,-19025,1)
   .vol('- - 1 -'.slide(1/8,.5))
   .vol('- - 1 .3'.seq(1/8))
   .tanh(2)
+  .widen(.04)
   .out(.3)
 
-mod(4).play('freesound:243601'.sample[0],46000,.95)
+mod(4).stereo().play('freesound:243601'.sample,46000,.95)
   .vol('- - - - - - 1 1 .8 - - - - - - -'.seq(1/16))
   .on(16,1).val(0)
   .delay(1/[100,200].seq(4))
   .daverb()
-  .out(.4)
+  .widen(.9)
+  .out(.23)
 
 on(1,1,8).grp()
   .noise()
@@ -868,7 +874,9 @@ on(1,1,8).grp()
   .out(.08)
 .end()
 
-main.tanh(1.5)
+main
+  .stereo()
+  .tanh(1.5)
   .on(8,2).grp()
     .bp(3000+mod(16,.06).cos(sync(16))*2800,4)
     .vol('.7 1.2 1.4 1.9 1.9 2.1 2.2 2.3'.seq(1/4))
@@ -921,7 +929,53 @@ main.tanh(1.5)
   .on(8,2).grp()
     .bp(3000+mod(16,.06).cos(sync(16))*2800,4)
     .vol('.7 1.2 1.4 1.9 1.9 2.1 2.2 2.3'.seq(1/4))
-  .end().plot()`];
+  .end().plot()`,`// Find Me
+
+bpm(133)
+
+mod(1/4,.5).sin(50+mod(1/4).val(70).exp(14))
+  .soft(1)
+  .exp(15)
+  .soft(2.5)
+  .tanh(1.5)
+  .daverb({
+    dry: .7,
+    wet:.18,
+    bandwidth: .21,
+    decay: .43,
+    preDelay: 8200,
+    inputDiffusion1: .94,
+    inputDiffusion2: .95,
+    decayDiffusion1: .89,
+    decayDiffusion2: .88,
+    damping: .8,
+    excursionRate: .59,
+    excursionDepth: .29,
+  })
+  .out(val(1).on(8,16).val(0)).plot(10)
+
+mod(1/16).play('freesound:183105'.sample,0,1.6,bar)
+  .vol('.1 .4 1 .4 .1 .3 1 .7'.seq(1/16))
+  .daverb({wet:.07})
+  .widen(.18)
+  .out(.18,.3)
+
+mod(1/8,.5).tri('f f f5 f6'.slide(1/16,4).note/20)
+  .soft(8)
+  .exp(10)
+  .soft(18)
+  .lp(1300,.32)
+  .lp(1000+sin(sync(64))*400,1.5)
+  .on(8,16).bp(600+sin(sync(128))*300,1)
+  .daverb({wet:.15})
+  .widen(.12)
+  .out(1,.18)
+
+mod(1/16).stereo().play('freesound:117085'.sample,0,
+  val(val(1).on(9,16,16).val(3).on(10,16,16).val(4))
+     .on(16,1/2).val(2).on(38,1/8).val(4))
+  .daverb({wet:.07})
+  .out(.2)`];
 
 const getContext = (canvas, { alpha = true, antialias = false } = {}) => {
   const gl = canvas.getContext('webgl2', { alpha, antialias });
@@ -1801,6 +1855,7 @@ self.t = 0;
 self.frame = 0;
 self.pixelRatio = window.devicePixelRatio;
 
+self.color = '#f00';
 self.videos = {};
 self.screens = [];
 self.scale = 2;
@@ -1986,6 +2041,13 @@ class Screen {
     return this
   }
 
+  color (color) {
+    if (color !== self.color) {
+      self.color = color;
+      self.editor.setColor(color);
+    }
+  }
+
   glitch () {
     this.screen.update();
     this.programs.glitch(this);
@@ -2038,6 +2100,8 @@ return screens[screens_i++].${method}(${argNames})
   );
 });
 
+self.IS_DEV = !!location.port && location.port != '3000';
+
 self.bufferSize = 2**19;
 self.buffers = [1,2,3].map(() => ([new Shared32Array(self.bufferSize), new Shared32Array(self.bufferSize)]));
 self.isRendering = false;
@@ -2087,19 +2151,23 @@ class Wavepot extends Rpc {
     return this.rpc('render', data)
   }
 
+  setColor ({ color }) {
+    editor.setColor(color);
+  }
+
   async fetchSample ({ url }) {
     const sample = await fetchSample(audio, url);
     return { sample }
   }
 }
 
-const worker = new Worker('wavepot-worker.js', { type: 'module' });
+const worker = new Worker(IS_DEV ? 'wavepot-worker.js' : 'wavepot-worker-build.js', { type: 'module' });
 const wavepot = new Wavepot();
 const shader = new Shader(container);
 
 let editor;
 const FILE_DELIMITER = '\n/* -^-^-^-^- */\n';
-let label = 'lastV6';
+let label = 'lastV8';
 let tracks = localStorage[label];
 if (tracks) tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track));
 else tracks = initial.map(value => ({ id: ((Math.random()*10e6)|0).toString(36), value }));
@@ -2117,13 +2185,14 @@ async function main () {
   wavepot.data.plot.pixelRatio = window.devicePixelRatio;
   container.appendChild(canvas);
 
-  editor = window.editor = new Editor({
+  editor = window.editor = self.editor = new Editor({
+    font: '/fonts/Hermit-Regular.woff2',
     // font: '/fonts/mononoki-Regular.woff2',
     // font: '/fonts/ClassCoder.woff2',
-    font: '/fonts/labmono-regular-web.woff2',
+    // font: '/fonts/labmono-regular-web.woff2',
     id: tracks[0].id,
     value: tracks[0].value,
-    fontSize: '10.5pt',
+    fontSize: '11pt',
     padding: 3.5,
     titlebarHeight: 0,
     width: window.innerWidth,
@@ -2223,6 +2292,7 @@ async function main () {
 }
 
 let audio,
+    gainNode,
     audioBuffers,
     bufferSourceNode,
     bar = {},
@@ -2239,6 +2309,9 @@ let toggle = async () => {
     sampleRate,
     latencyHint: 'playback' // without this audio glitches
   });
+
+  gainNode = audio.createGain();
+  gainNode.connect(audio.destination);
 
   audioBuffers = [1,2,3].map(() => audio.createBuffer(
     numberOfChannels,
@@ -2317,7 +2390,7 @@ let toggle = async () => {
 
     bufferSourceNode = audio.createBufferSource();
     bufferSourceNode.buffer = nextBuffer;
-    bufferSourceNode.connect(audio.destination);
+    bufferSourceNode.connect(gainNode);
     bufferSourceNode.loop = true;
     bufferSourceNode.loopStart = 0.0;
     bufferSourceNode.loopEnd = duration;
@@ -2362,10 +2435,12 @@ let toggle = async () => {
   };
 
   const start = () => {
+    gainNode.gain.value = 1.0;
     isPlaying = true;
     playNext();
     startAnim();
     toggle = () => {
+      gainNode.gain.value = 0.0;
       bufferSourceNode?.stop(0);
       stopAnim();
       offsetTime = 0;
@@ -2382,4 +2457,4 @@ let toggle = async () => {
   start();
 };
 
-main();
+main().then(toggle);
