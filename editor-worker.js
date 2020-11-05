@@ -2440,7 +2440,7 @@ var themes = [{
     meta: "#fff",
     tag: "#fff",
     gutter: 'rgba(0,0,0,.7)', //transparent',
-    caret: '#fff',
+    caret: '#bbb',
     titlebar: '#000', //rgba(0,0,50,.2)', //'#303030',
     title: '#fff',
     scrollbar: 'rgba(120,120,255,.17)', //', //'#3f30af',
@@ -2747,7 +2747,7 @@ class Editor {
   constructor (data = {}) {
     this.postMessage = self?.postMessage.bind(self);
     this.id = data.id ?? (Math.random() * 10e6 | 0).toString(36);
-    this.title = data.title ?? 'untitled';
+    this.title = data.title ?? 'untitled (ctrl+m to rename)';
     this.value = data.value;
     this.fontSize = data.fontSize ?? '8.4pt';
     this.pos = new Point;
@@ -2755,6 +2755,7 @@ class Editor {
     this.block = new Area;
     this.scroll = { pos: new Point, target: new Point };
     this.offsetTop = 0;
+    this.realOffsetTop = 0;
     this.subEditors = [];
     this.controlEditor = this;
     this.focusedEditor = null;
@@ -2766,7 +2767,7 @@ class Editor {
     // this.scrollAnim.threshold = { tiny: 9, near: .35, mid: 1.9, far: 1 }
     // this.scrollAnim.scale = { tiny: .296, near: .42, mid: .815, far: 2.85 }
     this.scrollAnim = { speed: 166, isRunning: false, animFrame: null };
-    this.scrollAnim.threshold = { tiny: 21, near: .29, mid: 1.9, far: 1 };
+    this.scrollAnim.threshold = { tiny: 21, near: .29, mid: 1.9, far: .1 };
     this.scrollAnim.scale = { tiny: .425, near: .71, mid: .802, far: 2.65 };
     this.animScrollStart = this.animScrollStart.bind(this);
     this.animScrollTick = this.animScrollTick.bind(this);
@@ -2816,6 +2817,13 @@ class Editor {
     this.font = data.font;
     this.fontSize = data.fontSize ?? this.fontSize;
     this.autoResize = data.autoResize ?? this.autoResize;
+
+    try {
+      const { groups: { color } } = /(?:color\(')(?<color>[^']+)/gi.exec(this.value);
+      if (color) {
+        this.color = color;
+      }
+    } catch (err) {}
 
     this.controlEditor = controlEditor ?? this.controlEditor;
     this.isSubEditor = !!this.controlEditor && this.controlEditor !== this;
@@ -2899,7 +2907,7 @@ class Editor {
 
     this.tabSize = 2;
 
-    this.titlebar = { height: data.titlebarHeight ??  this.char.px.height + 2.5 };
+    this.titlebar = { height: data.titlebarHeight ? data.titlebarHeight * pixelRatio : this.char.px.height + 2.5 };
     this.canvas.title.height = Math.max(1, this.titlebar.height);
 
     this.scrollbar = { width: 6 };
@@ -2923,7 +2931,7 @@ class Editor {
       pos: new Point,
       px: new Point,
       align: 0,
-      width: 1,
+      width: 10,
       height: this.line.height + this.line.padding / 2 + 2
     };
 
@@ -3008,6 +3016,17 @@ class Editor {
       this.focusedEditor.color = color;
       this.focusedEditor.updateText();
       this.controlEditor.draw();
+    }
+  }
+
+  setEditorById ({ id }) {
+    if (id === this.id) {
+      this.setFocusedEditor(this);
+    } else {
+      const editor = this.subEditors.find(editor => editor.id === id);
+      if (editor) {
+        this.setFocusedEditor(editor);
+      }
     }
   }
 
@@ -3683,8 +3702,8 @@ class Editor {
       - (this.canvas.padding
       + this.caret.height
       - this.line.padding)
-      * this.canvas.pixelRatio)
-      + 4; // TODO: this shouldn't be needed
+      * this.canvas.pixelRatio);
+      // + 4 // TODO: this shouldn't be needed
 
       // + (this.subEditors.length - 2)
 
@@ -3952,19 +3971,21 @@ class Editor {
       this.canvas.title.height
     );
     this.applyFont(this.ctx.title);
-    this.ctx.title.font = `normal 7.4pt mono`;
+    this.ctx.title.font = `normal 9.6pt mono`;
+    // this.ctx.title.textAlign = `center`
     this.ctx.title.scale(this.canvas.pixelRatio, this.canvas.pixelRatio);
     this.ctx.title.fillStyle = theme.title;
     this.ctx.title.fillText(
       (this.extraTitle ?? '') + this.title,
-      7,
-      5.4
+      39,
+      7.5 //5.4
     );
     this.ctx.title.restore();
   }
 
-  setOffsetTop (offsetTop) {
+  setOffsetTop (offsetTop, realOffsetTop) {
     this.offsetTop = offsetTop;
+    this.realOffsetTop = realOffsetTop;
 
     this.isVisible = !this.isSubEditor ||
       this.offsetTop
@@ -4143,7 +4164,7 @@ class Editor {
 
   drawBlock () {
     // draw block highlight
-    this.ctx.outer.fillStyle = theme.caret;
+    this.ctx.outer.fillStyle = '#fff'; //theme.caret
 
     if (this.block.isEmpty()) return
 
@@ -4161,7 +4182,7 @@ class Editor {
     + this.char.px.height + 1, // dy
 
       this.char.px.width, // dw
-      1 // dh
+      2 // dh
     );
 
     this.ctx.outer.fillRect(
@@ -4178,7 +4199,7 @@ class Editor {
     + this.char.px.height + 1, // dy
 
       this.char.px.width, // dw
-      1 // dh
+      2 // dh
     );
   }
 
@@ -4234,12 +4255,13 @@ class Editor {
       this.controlEditor.drawSync();
       return
     }
-    if (!this.isSubEditor) this.setOffsetTop(0);
+    if (!this.isSubEditor) this.setOffsetTop(0, 0);
     let offsetTop = -this.scroll.pos.y + this.canvas.gutter.height + this.titlebar.height;
-
+    let realOffsetTop = this.canvas.gutter.height + this.titlebar.height;
     this.subEditors.forEach(editor => {
-      editor.setOffsetTop(offsetTop);
+      editor.setOffsetTop(offsetTop, realOffsetTop);
       offsetTop += editor.canvas.gutter.height + editor.titlebar.height;
+      realOffsetTop += editor.canvas.gutter.height + editor.titlebar.height;
     });
     if (!this.isSubEditor) {
       this.clear();
@@ -4285,9 +4307,23 @@ class Editor {
     this.drawSync();
   }
 
-  scrollBy (d, animType) {
-    this.scroll.target.set(Point.clamp(this.canvas.scroll, this.scroll.pos.add(d)));
-
+  scrollBy (d, animType, clamp=false) {
+    this.scroll.target.set(
+      Point.clamp(clamp
+        ? {
+          begin: {
+            x: this.canvas.scroll.width,
+            y: this.controlEditor.focusedEditor.realOffsetTop,
+          },
+          end: {
+            x: this.canvas.scroll.width,
+            y: this.controlEditor.focusedEditor.realOffsetTop + this.controlEditor.focusedEditor.canvas.text.height-this.view.height + this.titlebar.height,
+          }
+        }
+        : this.canvas.scroll,
+        this.scroll.pos.add(d)
+      )
+    );
     if (!animType) {
       this.scrollTo(this.scroll.target);
     } else {
@@ -4358,8 +4394,10 @@ class Editor {
         break
 
         case 'ease':
-          d.x *= 0.5;
-          d.y *= 0.5;
+          // d.x *= 0.26
+          // d.y *= 0.26
+          d.x = Math[d.x > 0 ? 'min' : 'max'](d.x, Math.sign(d.x)*90);
+          d.y = Math[d.y > 0 ? 'min' : 'max'](d.y, Math.sign(d.y)*90);
         break
       }
 
@@ -4377,8 +4415,8 @@ class Editor {
     if (this.isSubEditor) return false
 
     for (const editor of this.subEditors.values()) {
-      if (e.clientY*2 > editor.offsetTop
-      && e.clientY*2 < editor.offsetTop
+      if (e.clientY*this.canvas.pixelRatio > editor.offsetTop
+      && e.clientY*this.canvas.pixelRatio < editor.offsetTop
       + editor.canvas.gutter.height
       + editor.titlebar.height
       ) {
@@ -4458,13 +4496,13 @@ class Editor {
     }
   }
 
-  keepCaretInView (animType, centered) {
+  keepCaretInView (animType, centered, clamp) {
     const caretPxDiff = this.getCaretPxDiff(centered);
     if (this.controlEditor === this) {
-      this.scrollBy({ x: -caretPxDiff.x, y: -caretPxDiff.y }, animType);
+      this.scrollBy({ x: -caretPxDiff.x, y: -caretPxDiff.y }, animType, clamp);
     } else {
       if (caretPxDiff.x !== 0) this.scrollBy({ x: -caretPxDiff.x, y: 0 }, animType);
-      if (caretPxDiff.y !== 0) this.controlEditor.scrollBy({ x: 0, y: -caretPxDiff.y }, animType);
+      if (caretPxDiff.y !== 0) this.controlEditor.scrollBy({ x: 0, y: -caretPxDiff.y }, animType, clamp);
     }
   }
 
@@ -4474,7 +4512,7 @@ class Editor {
     if (caretPxDiff.x !== 0) this.scrollBy({ x: -caretPxDiff.x, y: 0 });
     if (caretPxDiff.y !== 0) {
       if (jump) {
-        this.controlEditor.scrollBy({ x: 0, y: -(diffPx.y || caretPxDiff.y) }, 'ease');
+        this.controlEditor.scrollBy({ x: 0, y: -(diffPx.y || caretPxDiff.y) }, 'ease', true);
       } else {
         this.controlEditor.scrollBy({ x: 0, y: -caretPxDiff.y }, 'ease');
       }
@@ -4568,6 +4606,28 @@ class Editor {
         this.draw();
       }
       break
+      case 'Cmd Alt /':
+      case 'Cmd ?': {
+        if (!this.markActive || e.key === '?') {
+          let y = this.caret.pos.y;
+          while (y > 0 && this.buffer.getLineLength(y) > 0) y--;
+          let startY = y;
+          y = this.caret.pos.y;
+          while (y <= this.sizes.loc && this.buffer.getLineLength(y) > 0) y++;
+          let endY = y;
+          this.mark.set({
+            begin: { x:0, y:startY },
+            end: { x:0, y:endY }
+          });
+          this.markActive = true;
+          this.updateMark();
+          this.draw();
+          if (!e.altKey) {
+            break
+          }
+        }
+      }
+      // break
       case 'Cmd /': {
         let add;
         let area;
@@ -4625,6 +4685,9 @@ class Editor {
         this.setCaret(caret);
         this.updateMark();
         this.draw();
+        if (e.altKey) {
+          this.postMessage({ call: 'onblockcomment' });
+        }
       }
       return
       case 'Cmd D': {
@@ -4760,7 +4823,7 @@ class Editor {
 
       case 'PageUp': {
         const caretPos = this.caret.pos.copy();
-        this.applyCaretDiff(this.moveByLines((-this.page.lines/2)|0), true);
+        this.applyCaretDiff(this.moveByLines(-this.page.lines), true);
         if (e.shiftKey) this.markSet();
         else {
           if (caretPos.equal(this.caret.pos)) {
@@ -4771,7 +4834,7 @@ class Editor {
       break
       case 'PageDown': {
         const caretPos = this.caret.pos.copy();
-        this.applyCaretDiff(this.moveByLines((+this.page.lines/2)|0), true);
+        this.applyCaretDiff(this.moveByLines(+this.page.lines), true);
         if (e.shiftKey) this.markSet();
         else {
           if (caretPos.equal(this.caret.pos)) {
@@ -4803,6 +4866,8 @@ class Editor {
     if (index < 0) index = editors.length - 1;
     if (prev === index) return
     const editor = editors[index];
+    if (y > 0) editor.setCaret({ x:0, y:0 });
+    else editor.setCaret({ x:editor.buffer.getLineLength(editor.sizes.loc), y:editor.sizes.loc });
     this.setFocusedEditor(editor);
   }
 
@@ -4857,7 +4922,7 @@ class Editor {
     editor.updateSizes();
     editor.updateText();
     editor.updateMark();
-    if (animType !== false) editor.keepCaretInView(animType, centered);
+    if (animType !== false) editor.keepCaretInView(animType, centered, true);
     editor.draw();
   }
 

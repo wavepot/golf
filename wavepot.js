@@ -9,6 +9,8 @@ import ButtonPlay from './components/button-play.js'
 import ButtonSave from './components/button-save.js'
 import ButtonLike from './components/button-like.js'
 import ButtonShare from './components/button-share.js'
+import ButtonEye from './components/button-eye.js'
+import ButtonCode from './components/button-code.js'
 
 self.IS_DEV = !!location.port && location.port != '3000'
 
@@ -41,7 +43,7 @@ class Wavepot extends Rpc {
 
     try {
       const { shaderFunc, rest } = shader.extractAndCompile(code)
-      shader.shaderFunc = shaderFunc
+      shader.shaderFunc = shaderFunc ?? shader.shaderFunc
       code = rest
       if (shader.shaderFunc) {
         console.log('compiled shader')
@@ -71,17 +73,15 @@ class Wavepot extends Rpc {
   }
 }
 
-const worker = new Worker(IS_DEV ? 'wavepot-worker.js' : 'wavepot-worker-build.js', { type: 'module' })
+const workerUrl = new URL(IS_DEV ? 'wavepot-worker.js' : 'wavepot-worker-build.js', import.meta.url).href
+const worker = new Worker(workerUrl, { type: 'module' })
 const wavepot = new Wavepot()
 const shader = new Shader(container)
 
 let editor
 const FILE_DELIMITER = '\n/* -^-^-^-^- */\n'
-let label = 'lastV8'
+let label = 'lastV10'
 let tracks = localStorage[label]
-if (tracks) tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track))
-else tracks = initial.map(value => ({ id: ((Math.random()*10e6)|0).toString(36), value }))
-
 
 /* sidebar */
 const sidebar = document.createElement('div')
@@ -91,14 +91,40 @@ sidebar.className = 'sidebar'
 const toolbar = document.createElement('div')
 toolbar.className = 'toolbar'
 const playButton = new ButtonPlay(toolbar)
-new ButtonSave(toolbar)
+const saveButton = new ButtonSave(toolbar)
 new ButtonLike(toolbar)
 new ButtonShare(toolbar)
-new ButtonLogo(toolbar)
+const logoButton = new ButtonLogo(toolbar)
+const eyeButton = new ButtonEye(toolbar)
+let gfxActive = true
+eyeButton.eye.addEventListener('click', () => {
+  if (eyeButton.eye.classList.contains('active')) {
+    eyeButton.eye.classList.remove('active')
+    gfxActive = true
+    document.querySelector('.back-canvas').style.display = 'block'
+    document.querySelector('.shader-canvas').style.display = 'block'
+  } else {
+    eyeButton.eye.classList.add('active')
+    gfxActive = false
+    document.querySelector('.back-canvas').style.display = 'none'
+    document.querySelector('.shader-canvas').style.display = 'none'
+  }
+})
+const codeButton = new ButtonCode(toolbar)
+codeButton.code.addEventListener('click', () => {
+  if (codeButton.code.classList.contains('active')) {
+    codeButton.code.classList.remove('active')
+    document.querySelector('.editor').style.display = 'block'
+    document.querySelector('.track-list').style.display = 'block'
+  } else {
+    codeButton.code.classList.add('active')
+    document.querySelector('.editor').style.display = 'none'
+    document.querySelector('.track-list').style.display = 'none'
+  }
+})
 
 /* tracklist */
 self.focusTrack = id => {
-  console.log('focus id', id)
   editor.setEditorById(id)
 }
 const trackList = document.createElement('ol')
@@ -110,15 +136,81 @@ trackList.update = () => {
   + '</li>'
   ).join('')
 }
-trackList.update()
 
 sidebar.appendChild(toolbar)
 sidebar.appendChild(trackList)
 container.appendChild(sidebar)
 
 
+/* menu panel */
+const menu = document.createElement('div')
+menu.className = 'menu'
+menu.innerHTML = `<div class="menu-inner">
+<div class="menu-select">
+<button id="startnew">start new project</button>
+<button id="openinitial">load initial demo</button>
+<button id="importjson">import from json</button>
+<button id="exportjson">export to json</button>
+<button id="record">record</button>
+<!-- <div class="menu-select-item"><a href="#">browse</a></div>
+<div class="menu-select-item"><a href="#">saves</a></div>
+<div class="menu-select-item"><a href="#">favorites</a></div>
+<div class="menu-select-item"><a href="#">tools</a></div>
+<div class="menu-select-item"><a href="#">info</a></div> -->
+</div>
+</div>`
+menu.style.display = 'none'
+menu.querySelector('.menu-inner').addEventListener('mousedown', e => {
+  e.stopPropagation()
+  e.preventDefault()
+}, { capture: true })
+menu.querySelector('.menu-inner').addEventListener('click', e => {
+  e.stopPropagation()
+  e.preventDefault()
+})
+const menuHide = () => {
+  menu.style.display = 'none'
+  trackList.style.display = 'block'
+}
+menu.addEventListener('mousedown', e => {
+  e.stopPropagation()
+  e.preventDefault()
+  menuHide()
+})
+container.appendChild(menu)
+logoButton.onclick = () => {
+  menu.style.display = 'grid'
+  trackList.style.display = 'none'
+}
+
 
 async function main () {
+  const loadFromUrl = async () => {
+    if (location.pathname.split('/').length === 3) {
+      tracks = await Server.load(location.pathname.slice(1))
+      document.title = location.pathname.split('/').pop() + ' – wavepot'
+    }
+    if (editor) {
+      editor.destroy()
+      createEditor(tracks[0])
+      tracks.slice(1).forEach(data => editor.addSubEditor(data))
+    }
+  }
+
+  window.addEventListener('popstate', async () => {
+    await loadFromUrl()
+  })
+
+  if (location.pathname.split('/').length === 3) {
+    await loadFromUrl()
+  } else {
+    if (!tracks) tracks = initial
+    tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track))
+    // else tracks = initial.map(value => ({ id: ((Math.random()*10e6)|0).toString(36), value }))
+  }
+
+  trackList.update()
+
   const canvas = document.createElement('canvas')
   canvas.className = 'back-canvas'
   canvas.width = window.innerWidth*window.devicePixelRatio
@@ -131,103 +223,232 @@ async function main () {
   wavepot.data.plot.pixelRatio = window.devicePixelRatio
   container.appendChild(canvas)
 
-  editor = window.editor = self.editor = new Editor({
-    font: '/fonts/Hermit-Regular.woff2',
-    // font: '/fonts/mononoki-Regular.woff2',
-    // font: '/fonts/ClassCoder.woff2',
-    // font: '/fonts/labmono-regular-web.woff2',
-    id: tracks[0].id,
-    title: tracks[0].title,
-    value: tracks[0].value,
-    fontSize: '11pt',
-    padding: 6.5,
-    titlebarHeight: 53,
-    width: window.innerWidth,
-    height: window.innerHeight,
-  })
+  const createEditor = track => {
+    editor = window.editor = self.editor = new Editor({
+      font: '/fonts/Hermit-Regular.woff2',
+      // font: '/fonts/mononoki-Regular.woff2',
+      // font: '/fonts/ClassCoder.woff2',
+      // font: '/fonts/labmono-regular-web.woff2',
+      id: track.id,
+      title: track.title,
+      value: track.value,
+      fontSize: '11pt',
+      padding: 6.5,
+      titlebarHeight: 25.5,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
+    editor.ontoadd = () => {
+      const id = (Math.random() * 10e6 | 0).toString(36)
+      const title = 'untitled - (ctrl+m to rename)'
+      const value = 'bpm(120)\n\nmod(1/4).saw(50).exp(10).out().plot()\n'
+      editor.addSubEditor({ id, title, value })
+    }
+    editor.onblockcomment = () => {
+      play()
+    }
+    editor.onchange = (data) => {
+      const track = tracks.find(editor => editor.id === data.id)
+      if (track) track.value = data.value
+      save()
+    }
+    editor.onremove = (data) => {
+      const track = tracks.find(editor => editor.id === data.id)
+      if (track) {
+        tracks.splice(tracks.indexOf(track), 1)
+      }
+      save()
+    }
+    editor.onrename = (data) => {
+      const track = tracks.find(editor => editor.id === data.id)
+      if (track) {
+        track.title = data.title
+      }
+      save()
+    }
+    editor.onfocus = (data) => {
+      trackList.update()
+    }
+    editor.onupdate = async () => {
+  //    localStorage[label] = editor.value
+    }
+    editor.onsetup = () => {
+      events.setTarget('focus', editor, { target: events.textarea, type: 'mouseenter' })
+
+      // leave time to setup
+      setTimeout(() => {
+        editor.onadd = (data) => {
+          tracks.push(data)
+          save()
+        }
+      }, 1000)
+
+      let keydown = e => {
+        if (e.key === ' ' && (e.ctrlKey || e.metaKey)) {
+          e.stopPropagation()
+          e.preventDefault()
+          toggle()
+          return false
+        }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.stopPropagation()
+          e.preventDefault()
+          toggle()
+          return false
+        }
+
+        if (e.key === '.' && (e.ctrlKey || e.metaKey)) {
+          e.stopPropagation()
+          e.preventDefault()
+          play()
+          // editor.update(() => {
+          //   wavepot.compile().then(() => {
+          //     if (!isPlaying) {
+          //       toggle()
+          //     }
+          //     playNext()
+          //   })
+          // })
+          return false
+        }
+      }
+
+      document.body.addEventListener('keydown', keydown, { capture: true })
+      editor.ondestroy = () => {
+        document.body.removeEventListener('keydown', keydown, { capture: true })
+      }
+    }
+    container.appendChild(editor.canvas)
+    editor.parent = document.body
+    editor.rect = editor.canvas.getBoundingClientRect()
+  }
+
+  createEditor(tracks[0])
+
+  menu.querySelector('#startnew').addEventListener('click', e => {
+    menuHide()
+    editor.destroy()
+    tracks = [{
+      id: (Math.random()*10e6|0).toString(36),
+      title: 'untitled - (ctrl+m to rename)',
+      value: 'bpm(120)\n\nmod(1/4).saw(50).exp(10).out().plot()\n'
+    }]
+    createEditor(tracks[0])
+    save()
+  }, { capture: true })
+  menu.querySelector('#openinitial').addEventListener('click', e => {
+    menuHide()
+    editor.destroy()
+    tracks = initial
+    tracks = tracks.split(FILE_DELIMITER).map(track => JSON.parse(track))
+    createEditor(tracks[0])
+    tracks.slice(1).forEach(data => editor.addSubEditor(data))
+    save()
+  }, { capture: true })
+  menu.querySelector('#importjson').addEventListener('click', e => {
+    menuHide()
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = e => {
+      const file = e.target.files[0]
+      const reader = new FileReader()
+      reader.readAsText(file, 'utf-8')
+      reader.onload = async e => {
+        editor.destroy()
+        tracks = JSON.parse(e.target.result)
+        createEditor(tracks[0])
+        tracks.slice(1).forEach(data => editor.addSubEditor(data))
+        save()
+      }
+    }
+    input.click()
+  }, { capture: true })
+  menu.querySelector('#exportjson').addEventListener('click', e => {
+    menuHide()
+    const name = new Date().toISOString().replace(/[^0-9]/g, ' ').trim().split(' ').slice(0, -1).join('-') + '.json'
+    const file = new File([JSON.stringify(tracks)], name, { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(file)
+    a.download = name
+    a.click()
+  }, { capture: true })
+  menu.querySelector('#record').addEventListener('click', e => {
+    menuHide()
+    play((time) => {
+      const audioStreamDest = audio.createMediaStreamDestination()
+      gainNode.connect(audioStreamDest)
+      console.log('audio stream capture started')
+
+      const canvasStream = shader.canvas.captureStream(25)
+      console.log('canvas stream capture started')
+
+      canvasStream.addTrack(audioStreamDest.stream.getAudioTracks()[0])
+      console.log('merged streams')
+
+      const mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm;codecs=h264' })
+      // mediaRecorder.ignoreMutedMedia = true
+
+      const chunks = []
+      mediaRecorder.ondataavailable = e => {
+        chunks.push(e.data)
+        console.log('data from media recorder:', chunks.length)
+      }
+
+      mediaRecorder.onstart = () => {
+        console.log('started recording')
+        setTimeout(() => {
+          mediaRecorder.stop()
+          toggle()
+        }, 8000)
+      }
+      mediaRecorder.onstop = async function(evt) {
+        console.log('stopped recording')
+        const name = new Date().toISOString().replace(/[^0-9]/g, ' ').trim().split(' ').slice(0, -1).join('-') + '.mp4'
+        let blob = new Blob(chunks, { type: 'video/webm;codecs=h264' })
+        const arrayBuffer = await blob.arrayBuffer()
+        await import('./ffmpeg/ffmpeg.min.js')
+        const { createFFmpeg } = FFmpeg
+        const ffmpeg = createFFmpeg({ log: true })
+        await ffmpeg.load()
+        await ffmpeg.write('record.webm', new Uint8Array(arrayBuffer))
+        await ffmpeg.run('-i record.webm -c:v libx264 -preset veryslow -crf 17 -vf format=yuv420p,fps=25 -c:a aac -ar 44100 output.mp4')
+        const data = ffmpeg.read('output.mp4')
+        blob = new Blob([data.buffer], { type: 'video/mp4' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = name
+        a.click()
+      }
+      console.log('schedule to start recording:', time)
+      setTimeout(() => {
+        mediaRecorder.start()
+      }, time * 1000 - 100)
+    })
+  }, { capture: true })
+
 
   tracks.slice(1).forEach(data => editor.addSubEditor(data))
 
   let save = () => {
     localStorage[label] = tracks.map(track => JSON.stringify(track)).join(FILE_DELIMITER)
+    history.pushState({}, '', '/') // edited, so no url to point to, this enables refresh to use localstorage
+    document.title = 'wavepot'
+  }
+  let saveServer = async () => {
+    const responseJson = await Server.save(tracks)
+    history.pushState({}, '',
+      '/p/' + responseJson.generatedId)
+    document.title = responseJson.generatedId + ' – wavepot'
   }
 
-  editor.ontoadd = () => {
-    const id = (Math.random() * 10e6 | 0).toString(36)
-    const value = 'bpm(120)\n\nmod(1/4).saw(50).exp(10).out().plot()\n'
-    editor.addSubEditor({ id, value })
+  saveButton.onsave = () => {
+    saveServer()
   }
 
-  editor.onchange = (data) => {
-    const track = tracks.find(editor => editor.id === data.id)
-    if (track) track.value = data.value
-    save()
-  }
-  editor.onremove = (data) => {
-    const track = tracks.find(editor => editor.id === data.id)
-    if (track) {
-      tracks.splice(tracks.indexOf(track), 1)
-    }
-    save()
-  }
-  editor.onrename = (data) => {
-    const track = tracks.find(editor => editor.id === data.id)
-    if (track) {
-      track.title = data.title
-    }
-    save()
-  }
-  editor.onfocus = (data) => {
-    trackList.update()
-  }
-  editor.onupdate = async () => {
-//    localStorage[label] = editor.value
-  }
-  container.appendChild(editor.canvas)
-  editor.parent = document.body
-  editor.rect = editor.canvas.getBoundingClientRect()
+
   // TODO: cleanup this shit
   const events = registerEvents(document.body)
-  editor.onsetup = () => {
-    events.setTarget('focus', editor, { target: events.textarea, type: 'mouseenter' })
-
-    // leave time to setup
-    setTimeout(() => {
-      editor.onadd = (data) => {
-        tracks.push(data)
-        save()
-      }
-    }, 1000)
-
-    document.body.addEventListener('keydown', e => {
-      if (e.key === ' ' && (e.ctrlKey || e.metaKey)) {
-        e.stopPropagation()
-        e.preventDefault()
-        toggle()
-        return false
-      }
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.stopPropagation()
-        e.preventDefault()
-        toggle()
-        return false
-      }
-
-      if (e.key === '.' && (e.ctrlKey || e.metaKey)) {
-        e.stopPropagation()
-        e.preventDefault()
-        editor.update(() => {
-          wavepot.compile().then(() => {
-            if (!isPlaying) {
-              toggle()
-            }
-            playNext()
-          })
-        })
-        return false
-      }
-    }, { capture: true })
-  }
 
   window.onresize = () => {
     editor.resize({
@@ -286,10 +507,11 @@ container.appendChild(wave)
 
 const drawWave = () => {
   let ctx = wctx
-  let h = wave.height/2
-  let w = wave.width/2
+  let h = wave.height/pixelRatio
+  let w = wave.width/pixelRatio
   ctx.clearRect(0,0,w,h)
   ctx.beginPath()
+  ctx.lineWidth = Math.max(1, 1.6/pixelRatio)
   ctx.strokeStyle = '#fff'
   if (!inputBuffer) {
     ctx.moveTo(0, h/2)
@@ -306,7 +528,7 @@ const drawWave = () => {
   ctx.stroke()
 }
 
-let toggle = async () => {
+let toggle = async (cb) => {
   audio = new AudioContext({
     numberOfChannels,
     sampleRate,
@@ -314,7 +536,7 @@ let toggle = async () => {
   })
 
   gainNode = audio.createGain()
-  // gainNode.connect(audio.destination)
+  gainNode.connect(audio.destination)
 
   const scriptGainNode = audio.createGain()
   scriptGainNode.connect(audio.destination)
@@ -338,7 +560,7 @@ let toggle = async () => {
     return time + remain + offsetTime
   }
 
-  playNext = async () => {
+  playNext = async (cb) => {
     if (!isPlaying) return false
     if (isRendering) return false
 
@@ -421,6 +643,8 @@ let toggle = async () => {
     bar.stop(syncTime + Math.max(0.001, duration - Math.max(duration/2, (timeToRender*.001)*1.3) ))
 
     bufferSourceNode.start(syncTime)
+
+    if (cb) cb(syncTime - audio.currentTime)
   }
 
   console.log('connected node')
@@ -433,11 +657,12 @@ let toggle = async () => {
   const startAnim = () => {
     const tick = () => {
       animFrame = requestAnimationFrame(tick)
+      drawWave()
+      if (!gfxActive) return
       shader.time = (audio.currentTime - origSyncTime) * coeff
       clockBar.textContent =  Math.max(1, Math.floor(shader.time % 16) + 1)
       clockBeat.textContent = Math.max(1, Math.floor((shader.time*4) % 4) + 1)
       clockSixt.textContent = Math.max(1, Math.floor((shader.time*16) % 16) + 1)
-      drawWave()
       shader.tick()
     }
     animFrame = requestAnimationFrame(tick)
@@ -448,10 +673,10 @@ let toggle = async () => {
     cancelAnimationFrame(animFrame)
   }
 
-  const start = () => {
+  const start = (cb) => {
     gainNode.gain.value = 1.0
     isPlaying = true
-    playNext()
+    playNext(cb)
     startAnim()
     playButton.setIconPause()
     toggle = () => {
@@ -470,19 +695,22 @@ let toggle = async () => {
 
   await wavepot.compile()
 
-  start()
+  start(cb)
 }
 
-playButton.onplay = () => {
-  if (isPlaying) return
+const play = (cb) => {
   editor.update(() => {
     wavepot.compile().then(() => {
       if (!isPlaying) {
-        toggle()
+        toggle(cb)
       }
-      playNext()
+      playNext(cb)
     })
   })
+}
+playButton.onplay = () => {
+  if (isPlaying) return
+  play()
 }
 playButton.onpause = () => {
   if (!isPlaying) return
